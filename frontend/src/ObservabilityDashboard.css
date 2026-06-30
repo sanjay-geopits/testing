@@ -1,0 +1,591 @@
+/* ObservabilityDashboard.css */
+/* ─── Sync with ThemeContext — applies class to :root (documentElement) ──────── */
+:root:not(.light-mode) .obs-dashboard {
+    --bg-dark:      #020817;
+    --bg-card:      #0f172a;
+    --text-main:    #e2e8f0;
+    --text-muted:   #94a3b8;
+    --border-light: rgba(255, 255, 255, 0.07);
+    --accent-glow:  #00f2ff;
+    --accent-solid: #0ea5e9;
+    --level-error:  #ef4444;
+    --level-warn:   #f59e0b;
+    background: #020817;
+    color: #e2e8f0;
+}
+
+:root.light-mode .obs-dashboard {
+    --bg-dark:      #f1f5f9;
+    --bg-card:      #ffffff;
+    --text-main:    #0f172a;
+    --text-muted:   #64748b;
+    --border-light: rgba(0, 0, 0, 0.08);
+    --accent-glow:  #6366f1;
+    --accent-solid: #6366f1;
+    --level-error:  #ef4444;
+    --level-warn:   #f59e0b;
+    background: #f1f5f9;
+    color: #0f172a;
+}
+/* ─── Base ─────────────────────────────────────────────────────────────────── */
+.obs-dashboard {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    background: var(--bg-dark);
+    color: var(--text-main);
+    padding: 0 0 3rem 0;
+    transition: background 0.4s ease, color 0.4s ease;
+    overflow-x: hidden;
+}
+
+/* ─── Sticky Filters ────────────────────────────────────────────────────────── */
+.obs-sticky-filters {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10, 10, 10, 0.75);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border-light);
+    padding: 1rem 2rem;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+    /* Reserve height so content beneath doesn't jump when filter bar re-renders */
+    will-change: transform;
+}
+
+.light-mode .obs-sticky-filters {
+    background: rgba(248, 250, 252, 0.85);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+}
+
+.obs-filters-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 16px;
+    align-items: center;
+}
+
+.obs-filter-box {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.obs-filter-box label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    opacity: 0.8;
+}
+
+.obs-filter-select,
+.obs-filter-input {
+    background: rgba(30, 30, 40, 0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-main);
+    padding: 10px 14px;
+    border-radius: 10px;
+    outline: none;
+    font-size: 0.85rem;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    width: 100%;
+}
+
+.light-mode .obs-filter-select,
+.light-mode .obs-filter-input {
+    background: rgba(255, 255, 255, 0.7);
+    border-color: rgba(0, 0, 0, 0.08);
+    color: #0f172a;
+}
+
+.obs-filter-select:focus,
+.obs-filter-input:focus {
+    border-color: var(--accent-glow);
+    box-shadow: 0 0 20px rgba(0, 242, 255, 0.15);
+}
+
+.obs-filter-actions {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    padding-top: 10px;
+}
+
+/* ─── Header ────────────────────────────────────────────────────────────────── */
+.obs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding: 3rem 2rem 1.5rem 2rem;
+}
+
+.obs-header-left h1 {
+    font-size: 1.8rem;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #fff 0%, var(--text-muted) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.light-mode .obs-header-left h1 {
+    background: linear-gradient(135deg, #0f172a 0%, #334155 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.obs-header-left p {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.obs-header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+/* ─── Workspace ─────────────────────────────────────────────────────────────── */
+.obs-workspace {
+    padding: 0 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+    margin-top: 1rem;
+    /* Prevent the workspace from collapsing during data loads */
+    min-height: 800px;
+    overflow-x: hidden;
+}
+
+/* ─── Executive Summary ─────────────────────────────────────────────────────── */
+.obs-summary-panel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    padding: 20px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(59, 130, 246, 0.05) 100%);
+}
+
+.obs-summary-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.obs-summary-item label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.obs-summary-item span {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text-main);
+}
+
+.obs-summary-item .risk-high   { color: var(--level-error); }
+.obs-summary-item .risk-medium { color: var(--level-warn);  }
+
+/* ─── KPI Grid (single authoritative rule) ──────────────────────────────────── */
+.obs-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 20px;
+}
+
+/* ─── KPI Card (single authoritative rule) ──────────────────────────────────── */
+.obs-kpi-card {
+    /* Fixed dimensions prevent layout shift when content loads */
+    min-height: 140px;
+    background: rgba(30, 30, 40, 0.3);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 20px;
+    padding: 24px;
+    position: relative;
+    cursor: pointer;
+    /* Only animate transform & shadow — never width/height/padding */
+    transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+    overflow: hidden;
+    /* Isolate so internal changes never cause ancestor reflow */
+    contain: layout style;
+}
+
+.obs-kpi-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent-glow), transparent);
+    transform: translateX(-100%);
+    transition: transform 0.6s ease;
+}
+
+.obs-kpi-card:hover {
+    transform: translateY(-6px);
+    background: rgba(30, 30, 40, 0.5);
+    border-color: rgba(0, 242, 255, 0.25);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0, 242, 255, 0.05);
+}
+
+.obs-kpi-card:hover::before { transform: translateX(100%); }
+
+.light-mode .obs-kpi-card {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: rgba(0, 0, 0, 0.05);
+}
+
+.obs-kpi-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--text-muted);
+}
+
+.obs-kpi-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.obs-kpi-icon {
+    opacity: 0.6;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+.obs-kpi-card:hover .obs-kpi-icon {
+    transform: scale(1.1) rotate(5deg);
+    opacity: 1;
+}
+
+.obs-kpi-body  { margin-top: 8px; }
+.obs-kpi-value { font-size: 2rem; font-weight: 800; line-height: 1.1; }
+.obs-kpi-footer {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+/* Sparkline area inside KPI card */
+.obs-kpi-sparkline {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 50px;
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+/* ─── Tabs ──────────────────────────────────────────────────────────────────── */
+.obs-nav-tabs {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    padding: 8px;
+    background: rgba(20, 20, 30, 0.3);
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    scrollbar-width: none;
+}
+
+.obs-nav-tabs::-webkit-scrollbar { display: none; }
+
+.obs-tab-btn {
+    padding: 12px 20px;
+    border-radius: 10px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    transition: color 0.2s ease, background 0.2s ease;
+}
+
+.obs-tab-btn:hover {
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.obs-tab-btn.active {
+    color: #fff;
+    background: var(--accent-solid);
+    box-shadow: 0 4px 15px rgba(0, 242, 255, 0.3);
+}
+
+/* ─── Card Rows ─────────────────────────────────────────────────────────────── */
+.obs-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 24px;
+    /* Stable minimum height prevents collapse during lazy-load */
+    min-height: 200px;
+}
+
+.obs-row.full { grid-template-columns: 1fr; }
+
+.obs-card {
+    background: rgba(30, 30, 40, 0.3);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 20px;
+    padding: 24px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    /* Isolate layout; child reflows won't escape */
+    contain: layout style;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.obs-card:hover {
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
+}
+
+.obs-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    /* Fixed height prevents the header from shifting as buttons load */
+    min-height: 32px;
+}
+
+.obs-card-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.obs-chart-container {
+    /* Explicit height prevents the ECharts canvas from collapsing to 0 on first
+       render and then snapping open — the main cause of vertical jitter */
+    height: 320px;
+    width: 100%;
+    position: relative;
+    flex-shrink: 0;
+}
+
+/* ─── Tables ────────────────────────────────────────────────────────────────── */
+.obs-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.obs-table th {
+    background: rgba(15, 23, 42, 0.4);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.obs-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    font-size: 0.85rem;
+}
+
+.light-mode .obs-table td {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.obs-table tbody tr:hover            { background: rgba(255, 255, 255, 0.02); }
+.light-mode .obs-table tbody tr:hover { background: rgba(0, 0, 0, 0.02); }
+
+/* ─── Risk Score Badges ─────────────────────────────────────────────────────── */
+.risk-score-badge {
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.8rem;
+    text-align: center;
+    display: inline-block;
+    white-space: nowrap;
+}
+
+.risk-high-badge {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.risk-medium-badge {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fcd34d;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.risk-low-badge {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+/* ─── Bottlenecks ───────────────────────────────────────────────────────────── */
+.obs-bottlenecks-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.obs-bottleneck-row {
+    padding: 16px;
+    border-radius: 12px;
+    background: rgba(20, 20, 20, 0.5);
+    border: 1px solid var(--border-light);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: transform 0.2s ease;
+}
+
+.obs-bottleneck-row:hover    { transform: translateX(4px); border-color: var(--accent-glow); }
+.obs-bottleneck-info h4      { font-size: 0.95rem; font-weight: 600; }
+.obs-bottleneck-info p       { font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; }
+.obs-bottleneck-stats        { text-align: right; }
+.obs-bottleneck-wait         { font-size: 1.1rem; font-weight: 700; color: var(--accent-glow); }
+.obs-bottleneck-alert        { border-left: 4px solid var(--level-error); }
+
+/* ─── Skeleton Loaders ──────────────────────────────────────────────────────── */
+.obs-skeleton {
+    background: linear-gradient(90deg,
+        rgba(255,255,255,0.05) 25%,
+        rgba(255,255,255,0.10) 37%,
+        rgba(255,255,255,0.05) 63%);
+    background-size: 400% 100%;
+    animation: obs-shimmer 1.4s ease infinite;
+    border-radius: 16px;
+}
+
+.light-mode .obs-skeleton {
+    background: linear-gradient(90deg,
+        rgba(0,0,0,0.05) 25%,
+        rgba(0,0,0,0.10) 37%,
+        rgba(0,0,0,0.05) 63%);
+    background-size: 400% 100%;
+}
+
+@keyframes obs-shimmer {
+    0%   { background-position: 100% 50%; }
+    100% { background-position:   0% 50%; }
+}
+
+/* Heights match the real widgets they replace, preventing layout shift */
+.obs-skeleton-card  { height: 140px; width: 100%; }
+.obs-skeleton-chart { height: 400px; width: 100%; }
+
+/* ─── Empty State ───────────────────────────────────────────────────────────── */
+.obs-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 250px;
+    text-align: center;
+    color: var(--text-muted);
+    gap: 12px;
+}
+
+/* ─── Scroll-to-top ─────────────────────────────────────────────────────────── */
+.obs-scroll-top {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    z-index: 99;
+    background: var(--accent-solid);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.obs-scroll-top:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 242, 255, 0.4);
+}
+
+/* ─── Responsive ────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .obs-sticky-filters { padding: 1rem; }
+
+    .obs-filters-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .obs-filter-actions {
+        grid-column: span 2;
+        padding-top: 8px;
+    }
+
+    .obs-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 16px;
+        padding: 1.5rem 1rem;
+    }
+
+    .obs-workspace { padding: 0 1rem; }
+    .obs-row       { grid-template-columns: 1fr; }
+}
+/* ─── Theme Toggle ───────────────────────────────────────────────────────────── */
+.obs-theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+    white-space: nowrap;
+}
+
+.obs-theme-toggle:hover {
+    background: rgba(99, 102, 241, 0.1);
+    border-color: rgba(99, 102, 241, 0.4);
+    color: var(--text-main);
+}
+
+.dark-mode .obs-theme-toggle {
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+.light-mode .obs-theme-toggle {
+    border-color: rgba(0, 0, 0, 0.1);
+}

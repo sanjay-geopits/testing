@@ -1,0 +1,130 @@
+Attempting time sync via http://worldtimeapi.org/api/timezone/Asia/Kolkata...
+Sync failed for http://worldtimeapi.org/api/timezone/Asia/Kolkata: ('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))
+Attempting time sync via https://timeapi.io/api/Time/current/zone?timeZone=Asia/Kolkata...
+Sync failed for https://timeapi.io/api/Time/current/zone?timeZone=Asia/Kolkata: Invalid isoformat string: '2026-06-25T16:10:54.5977518'
+Attempting time sync via https://www.google.com...
+Time sync SUCCESS via https://www.google.com. Drift: -1.18s
+[GRAPH API] Attempting to initialize live Exchange connection using Microsoft Graph API...
+[GRAPH API] Successfully connected to live Exchange server via MS Graph!
+Connected to mailbox successfully!
+Found MSSQL Alert folder: AAMkADJhYTRmYjJmLTczZWEtNGZmNC1iMDdmLTUxMDQ3NTRmYmE5NAAuAAAAAABUiQQrvlRXQp-xgUT2F3y9AQBlUroFVXQIRZuHi3J2HcyFAAEmRE1NAAA=
+Retrieved 10 messages.
+
+--- Email 1 ---
+Subject: GEOJIT DRP-DIST03 - Long Running Queries: Open
+Client: Geojit, Server: DRP-DIST03, LogType: mssql_alert
+Parsed SPID: 715
+Parsed SQL Length: 171
+Parsed Status: Open
+Body Snippet (first 300 chars):
+Hello Team,
+Our DBAs have detected long-running queries on DRP-DIST03 Server that are consuming significant resources and may impact overall performance.
+Below is a query that requires your attention:
+SPID:715
+Query Details:
+SPIDStart TimeElapsed Time (hh:mm:ss)UserHostNameDatabaseSQL TextWait TypeS
+
+--- Email 2 ---
+Subject: Maxhealthcare BLRHISNDB-P1 Create_SC_Messages_if_not_generted Failed Alert -> Open
+Client: None, Server: None, LogType: generic
+Parsed SPID: None
+Parsed SQL Length: 0
+Parsed Status: Open
+Body Snippet (first 300 chars):
+Job Failure Alert Job NameCreate_SC_Messages_if_not_genertedJob Owner NameShivenStep NameStep 1Error MessageExecuted as user: MAXHEALTHCARE\SVCHIS2K14E1. Unspecified error occurred on SQL Server. Connection may have been terminated by the server. [SQLSTATE HY000] (Error 0) Cannot continue the execut
+
+--- Email 3 ---
+Subject: GEOJIT DRP-DIST03 - Long Running Queries: Open
+Client: Geojit, Server: DRP-DIST03, LogType: mssql_alert
+Parsed SPID: 715
+Parsed SQL Length: 171
+Parsed Status: Open
+Body Snippet (first 300 chars):
+Hello Team,
+Our DBAs have detected long-running queries on DRP-DIST03 Server that are consuming significant resources and may impact overall performance.
+Below is a query that requires your attention:
+SPID:715
+Query Details:
+SPIDStart TimeElapsed Time (hh:mm:ss)UserHostNameDatabaseSQL TextWait TypeS
+
+--- Email 4 ---
+Subject: MAXHealthcare BLR-MAX-SUNDB -Long Running Queries:Closed
+Client: Maxhealthcare, Server: BLR-MAX-SUNDB, LogType: mssql_alert
+Parsed SPID: None
+Parsed SQL Length: 881
+Parsed Status: Closed
+Body Snippet (first 300 chars):
+Hello Team,
+We have recently identified and reviewed several long-running queries on BLR-MAX-SUNDB that were consuming substantial resources.
+I wanted to provide you with an update on the status of these queries.
+Below is a summary of the long-running queries that have been addressed:
+The following 
+
+--- Email 5 ---
+Subject: GEOJIT DRP-DIST03 - Long Running Queries: Open
+Client: Geojit, Server: DRP-DIST03, LogType: mssql_alert
+Parsed SPID: 715
+Parsed SQL Length: 171
+Parsed Status: Open
+Body Snippet (first 300 chars):
+Hello Team,
+Our DBAs have detected long-running queries on DRP-DIST03 Server that are consuming significant resources and may impact overall performance.
+Below is a query that requires your attention:
+SPID:715
+Query Details:
+SPIDStart TimeElapsed Time (hh:mm:ss)UserHostNameDatabaseSQL TextWait TypeS
+
+--- Email 6 ---
+Subject: MAX Healthcare BLR-MAX-SUNDB -Long Running Queries:Open
+Client: None, Server: None, LogType: generic
+Parsed SPID: 63
+Parsed SQL Length: 184
+Parsed Status: Open
+Body Snippet (first 300 chars):
+Hello Team,
+Our DBAs have detected long-running queries on BLR-MAX-SUNDB Server that are consuming significant resources and may impact overall performance.
+Below is a query that requires your attention:
+SPID:63, 884
+Query Details:
+SPIDStart TimeElapsed Time (hh:mm:ss)UserDatabaseSQL TextWait TypeSt
+
+--- Email 7 ---
+Subject: Maxhealthcare BLR-MAX-SUNDB DBA_GeoPITS_LongRunningQueries_Closed Failed Alert -> Closed 
+Client: None, Server: None, LogType: generic
+Parsed SPID: None
+Parsed SQL Length: 0
+Parsed Status: Closed
+Body Snippet (first 300 chars):
+Failed Job Success AlertJob NameDBA_GeoPITS_LongRunningQueries_ClosedJob Owner NameGeoPITSl3Step NameClosed SPIDSuccess MessageExecuted as user: MAXHEALTHCARE\sqlsifyadmin. Mail (Id: 242007) queued. [SQLSTATE 01000] (Message 0). The step succeeded.Last Run Start Time2026-06-25 15:52:01Last Failure T
+
+--- Email 8 ---
+Subject: GEOJIT DRP-DIST03 - Long Running Queries: Open
+Client: Geojit, Server: DRP-DIST03, LogType: mssql_alert
+Parsed SPID: 715
+Parsed SQL Length: 182
+Parsed Status: Open
+Body Snippet (first 300 chars):
+Hello Team,
+Our DBAs have detected long-running queries on DRP-DIST03 Server that are consuming significant resources and may impact overall performance.
+Below is a query that requires your attention:
+SPID:715
+Query Details:
+SPIDStart TimeElapsed Time (hh:mm:ss)UserHostNameDatabaseSQL TextWait TypeS
+
+--- Email 9 ---
+Subject: Maxhealthcare BLR-MAX-SUNDB DBA_GeoPITS_LongRunningQueries_Closed Failed Alert -> Open
+Client: None, Server: None, LogType: generic
+Parsed SPID: None
+Parsed SQL Length: 0
+Parsed Status: Closed
+Body Snippet (first 300 chars):
+Job Failure Alert Job NameDBA_GeoPITS_LongRunningQueries_ClosedJob Owner NameGeoPITSl3Step NameClosed SPIDError MessageExecuted as user: MAXHEALTHCARE\sqlsifyadmin. FOR XML could not serialize the data for node 'NoName' because it contains a character (0x0000) which is not allowed in XML. To retriev
+
+--- Email 10 ---
+Subject: Maxhealthcare BLR-MAX-SUNDB DBA_GeoPITS_LongRunningQueries_Closed Failed Alert -> Closed 
+Client: None, Server: None, LogType: generic
+Parsed SPID: None
+Parsed SQL Length: 0
+Parsed Status: Closed
+Body Snippet (first 300 chars):
+Failed Job Success AlertJob NameDBA_GeoPITS_LongRunningQueries_ClosedJob Owner NameGeoPITSl3Step NameClosed SPIDSuccess MessageExecuted as user: MAXHEALTHCARE\sqlsifyadmin. The step succeeded.Last Run Start Time2026-06-25 15:54:00Last Failure Time2026-06-25 15:50:01Last Success Time2026-06-25 15:54:

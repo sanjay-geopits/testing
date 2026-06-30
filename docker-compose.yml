@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:17
+    container_name: postgres_db
+    restart: always
+
+    env_file:
+      - .env
+
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+#      - ../log-analyzer-ai.sql:/docker-entrypoint-initdb.d/init.sql
+
+    ports:
+      - "127.0.0.1:${DB_PORT}:5432"
+
+volumes:
+  postgres_data:

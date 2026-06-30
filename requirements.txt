@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+psycopg2
+python-dotenv
+openai
+pydantic
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
+authlib
+httpx
+python-docx
+itsdangerous
