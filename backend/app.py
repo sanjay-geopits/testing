@@ -224,8 +224,8 @@ def check_client_alert_thresholds():
             try:
                 cur.execute("SELECT alert_email FROM technology_alerts_config WHERE LOWER(technology) = LOWER(%s) AND alert_email IS NOT NULL AND alert_email <> '';", (db_type,))
                 row = cur.fetchone()
-                if row and row[0]:
-                    default_cc = row[0]
+                if row and row.get("alert_email"):
+                    default_cc = row["alert_email"]
             except Exception as db_err:
                 print(f"Error querying technology_alerts_config: {db_err}")
 
@@ -796,6 +796,15 @@ async def startup_event():
     alert_settings_thread.start()
     print("[ALERT DAEMON] Background alert settings checker thread launched.")
 
+    # Run database maintenance cleanup for processed emails older than 30 days
+    try:
+        from cleanup_processed_emails import run_cleanup
+        cleanup_thread = threading.Thread(target=run_cleanup, name="DbMaintenanceCleanup", daemon=True)
+        cleanup_thread.start()
+        print("[CLEANUP] Database maintenance cleanup thread started.")
+    except Exception as cleanup_err:
+        print(f"[CLEANUP ERROR] Failed to start cleanup thread: {cleanup_err}")
+
 # Link new features
 def init_db_tables():
     try:
@@ -972,14 +981,32 @@ def get_db_connection():
         )
         try:
             yield conn
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
         finally:
-            conn.close()
+            try:
+                conn.close()
+            except Exception:
+                pass
     else:
         conn = db_pool.getconn()
         try:
             yield conn
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
         finally:
-            db_pool.putconn(conn)
+            try:
+                db_pool.putconn(conn)
+            except Exception:
+                pass
 
 # Global lock to prevent concurrent refreshes of the materialized view
 _mv_refresh_lock = False
@@ -1754,33 +1781,9 @@ def create_auto_ticket_for_log(cur, client_name: str, db_type: str, severity: st
     except Exception as ex_dedup:
         print(f"Error checking existing ticket: {ex_dedup}")
 
-    client_email = None
-    tech_email = None
-    try:
-        cur.execute("SELECT client_email FROM admin_clients WHERE LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) LIMIT 1", (client_name,))
-        row_ce = cur.fetchone()
-        if row_ce and row_ce[0]:
-            client_email = row_ce[0]
-        
-        cur.execute("SELECT client_email FROM admin_clients WHERE LOWER(TRIM(db_type)) = LOWER(TRIM(%s)) LIMIT 1", (db_type,))
-        row_te = cur.fetchone()
-        if row_te and row_te[0]:
-            tech_email = row_te[0]
-    except Exception as ex_db:
-        print(f"Error querying contacts for auto ticket: {ex_db}")
-
-    recipient_list = ["dccagent@geopits.com"]
-    if client_email:
-        recipient_list.append(client_email)
-    else:
-        print(f"log [Client Contact Missing] - there is no client mail configured for {client_name}")
-    
-    if tech_email:
-        recipient_list.append(tech_email)
-    else:
-        print(f"log [Tech Contact Missing] - there is no technology routing mail configured for {db_type}")
-    
-    contact_emails = ", ".join(recipient_list)
+    from db_manager import get_alert_contacts
+    contacts = get_alert_contacts(cur, client_name, db_type)
+    contact_emails = contacts["to_emails"]
     
     ticket_name = f"[AUTO] {severity} Alert: {log_type or 'Incident'} on {server_name or 'any'}"
     description = f"Auto-generated ticket for log event.\nMessage: {log_message}\nLog Hash: {log_hash}"
@@ -1874,6 +1877,7 @@ def update_log_metadata(
                     INSERT INTO db_archived_logs ({common_cols})
                     SELECT {common_cols} FROM db_monitoring_logs 
                     WHERE TRIM(log_hash) = %s
+                    ON CONFLICT (log_hash) DO NOTHING
                 """, (search_hash,))
                 cur.execute("DELETE FROM db_monitoring_logs WHERE TRIM(log_hash) = %s", (search_hash,))
                 target_table = "db_archived_logs"
@@ -1883,6 +1887,7 @@ def update_log_metadata(
                     INSERT INTO db_monitoring_logs ({common_cols})
                     SELECT {common_cols} FROM db_archived_logs 
                     WHERE TRIM(log_hash) = %s
+                    ON CONFLICT (log_hash) DO NOTHING
                 """, (search_hash,))
                 cur.execute("DELETE FROM db_archived_logs WHERE TRIM(log_hash) = %s", (search_hash,))
                 target_table = "db_monitoring_logs"
@@ -3671,26 +3676,9 @@ def create_auto_ticket_if_missing(conn, log_id, client, db, server, l_type, msg,
             cur.execute("UPDATE db_archived_logs SET ticket_id = %s, ticket_status = 'OPEN' WHERE id = %s", (t_id, log_id))
             return t_id
 
-        # If no active ticket exists, query emails for contact field
-        client_email = None
-        tech_email = None
-        cur.execute("SELECT client_email FROM admin_clients WHERE client_name = %s LIMIT 1", (client,))
-        row_ce = cur.fetchone()
-        if row_ce and row_ce[0]:
-            client_email = row_ce[0]
-        
-        cur.execute("SELECT client_email FROM admin_clients WHERE db_type = %s LIMIT 1", (db,))
-        row_te = cur.fetchone()
-        if row_te and row_te[0]:
-            tech_email = row_te[0]
-
-        recipient_list = ["dccagent@geopits.com"]
-        if client_email:
-            recipient_list.append(client_email)
-        if tech_email:
-            recipient_list.append(tech_email)
-        
-        contact_emails = ", ".join(recipient_list)
+        from db_manager import get_alert_contacts
+        contacts = get_alert_contacts(cur, client, db)
+        contact_emails = contacts["to_emails"]
         
         cur.execute("""
             INSERT INTO tickets (
@@ -3803,23 +3791,21 @@ def run_daily_consolidated_alerts(conn, cur):
             continue
 
         # Resolve TO and CC emails
+        from db_manager import get_alert_contacts
         to_emails_set = set()
-        cc_emails_set = set()
 
         for db_type in unique_db_types:
             try:
-                to_e, cc_e, _ = lookup_email_routing_service(client, db_type, conn)
+                resolved = get_alert_contacts(cur, client, db_type)
+                to_e = resolved["to_emails"]
                 if to_e:
                     for email in re.split(r'[;,]', to_e):
                         if email.strip(): to_emails_set.add(email.strip())
-                if cc_e:
-                    for email in re.split(r'[;,]', cc_e):
-                        if email.strip(): cc_emails_set.add(email.strip())
             except Exception as e_err:
                 print(f"[DAILY ALERTS] Email routing lookup failed for {client} / {db_type}: {e_err}")
 
         to_emails = ", ".join(to_emails_set)
-        cc_emails = ", ".join(cc_emails_set)
+        cc_emails = ""
 
         if not to_emails:
             to_emails = "dccagent@geopits.com"

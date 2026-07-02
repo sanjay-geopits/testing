@@ -206,37 +206,9 @@ def table_entry_exists(cursor, server_name, database_name, table_name, captured_
     return cursor.fetchone() is not None
 
 def lookup_client_contact_details(cursor, client_name, db_type):
-    try:
-        # Try admin_clients first
-        cursor.execute("""
-            SELECT client_email, phone_number 
-            FROM admin_clients 
-            WHERE LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) 
-              AND LOWER(TRIM(db_type)) = LOWER(TRIM(%s))
-            LIMIT 1;
-        """, (client_name, db_type))
-        row = cursor.fetchone()
-        if row and row[0]:
-            return row[0], row[1]
-    except Exception as e:
-        print(f"[ALERT DAEMON] Error checking admin_clients contacts: {e}")
-        
-    try:
-        # Try client_access
-        cursor.execute("""
-            SELECT client_email, phone_number 
-            FROM client_access 
-            WHERE LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) 
-              AND LOWER(TRIM(technology)) = LOWER(TRIM(%s))
-            LIMIT 1;
-        """, (client_name, db_type))
-        row = cursor.fetchone()
-        if row and row[0]:
-            return row[0], row[1]
-    except Exception as e:
-        print(f"[ALERT DAEMON] Error checking client_access contacts: {e}")
-        
-    return None, None
+    from db_manager import get_alert_contacts
+    res = get_alert_contacts(cursor, client_name, db_type)
+    return res["client_email"], res["phone_number"]
 
 def trigger_combined_growth_alert(cursor, client_name, db_type, db_changes, table_changes):
     if not db_changes and not table_changes:
@@ -248,41 +220,10 @@ def trigger_combined_growth_alert(cursor, client_name, db_type, db_changes, tabl
         print(f"[ALERT DAEMON] Error importing send_email_outlook: {e}")
         return
 
-    # 1. Resolve contact details — send to both client email and technology alert email
-    client_email, phone_number = lookup_client_contact_details(cursor, client_name, db_type)
-    if not client_email:
-        print("[ALERT ROUTING] there is no client mail")
-
-    # Fetch technology alert email from technology_alerts_config
-    tech_alert_email = None
-    try:
-        cursor.execute(
-            "SELECT alert_email FROM technology_alerts_config WHERE LOWER(technology) = LOWER(%s) AND alert_email IS NOT NULL AND alert_email <> '' LIMIT 1;",
-            (db_type,)
-        )
-        tech_row = cursor.fetchone()
-        if tech_row and tech_row[0]:
-            tech_alert_email = tech_row[0]
-    except Exception as _cc_err:
-        print(f"[ALERT DAEMON] Could not fetch technology alert email: {_cc_err}")
-
-    if not tech_alert_email:
-        print("[ALERT ROUTING] there is no technology alert mail")
-
-    # Combine client email, technology alert email, and default dccagent@geopits.com
-    to_list = ["dccagent@geopits.com"]
-    if client_email:
-        for email in re.split(r'[;,]', client_email):
-            email = email.strip()
-            if email and email not in to_list:
-                to_list.append(email)
-    if tech_alert_email:
-        for email in re.split(r'[;,]', tech_alert_email):
-            email = email.strip()
-            if email and email not in to_list:
-                to_list.append(email)
-
-    to_emails = ", ".join(to_list)
+    # 1. Resolve contact details
+    from db_manager import get_alert_contacts
+    resolved = get_alert_contacts(cursor, client_name, db_type)
+    to_emails = resolved["to_emails"]
     cc_emails = None
     
     # 2. Build ticket title and description
@@ -320,7 +261,7 @@ def trigger_combined_growth_alert(cursor, client_name, db_type, db_changes, tabl
             INSERT INTO tickets (business_unit, company, contact, ticket_name, category, status, priority, agent, description, created_by, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'System', NOW())
             RETURNING id;
-        """, (db_type, client_name, to_emails, ticket_name, 'Storage Alert', 'OPEN', 'Medium', 'SYSTEM', desc))
+        """, (db_type, client_name, to_emails, ticket_name, 'Alert', 'OPEN', 'Medium', 'SYSTEM', desc))
         ticket_id = cursor.fetchone()[0]
         
         # 3. Create ticket comment log
@@ -453,41 +394,10 @@ def trigger_growth_alert(cursor, client_name, db_type, db_name, item_name, old_s
         print(f"[ALERT DAEMON] Error importing send_email_outlook: {e}")
         return
 
-    # 1. Resolve contact details — priority: client email → technology alert email → skip
-    client_email, phone_number = lookup_client_contact_details(cursor, client_name, db_type)
-    if not client_email:
-        print("[ALERT ROUTING] there is no client mail")
-
-    # Fetch technology alert email from technology_alerts_config
-    tech_alert_email = None
-    try:
-        cursor.execute(
-            "SELECT alert_email FROM technology_alerts_config WHERE LOWER(technology) = LOWER(%s) AND alert_email IS NOT NULL AND alert_email <> '' LIMIT 1;",
-            (db_type,)
-        )
-        tech_row = cursor.fetchone()
-        if tech_row and tech_row[0]:
-            tech_alert_email = tech_row[0]
-    except Exception as _cc_err:
-        print(f"[ALERT DAEMON] Could not fetch technology alert email: {_cc_err}")
-
-    if not tech_alert_email:
-        print("[ALERT ROUTING] there is no technology alert mail")
-
-    # Combine client email, technology alert email, and default dccagent@geopits.com
-    to_list = ["dccagent@geopits.com"]
-    if client_email:
-        for email in re.split(r'[;,]', client_email):
-            email = email.strip()
-            if email and email not in to_list:
-                to_list.append(email)
-    if tech_alert_email:
-        for email in re.split(r'[;,]', tech_alert_email):
-            email = email.strip()
-            if email and email not in to_list:
-                to_list.append(email)
-
-    to_emails = ", ".join(to_list)
+    # 1. Resolve contact details
+    from db_manager import get_alert_contacts
+    resolved = get_alert_contacts(cursor, client_name, db_type)
+    to_emails = resolved["to_emails"]
     cc_emails = None
     
     # Format sizes
@@ -516,7 +426,7 @@ def trigger_growth_alert(cursor, client_name, db_type, db_name, item_name, old_s
             INSERT INTO tickets (business_unit, company, contact, ticket_name, category, status, priority, agent, description, created_by, created_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'System', NOW())
             RETURNING id;
-        """, (db_type, client_name, to_emails, ticket_name, 'Storage Alert', 'OPEN', 'Medium', 'SYSTEM', desc))
+        """, (db_type, client_name, to_emails, ticket_name, 'Alert', 'OPEN', 'Medium', 'SYSTEM', desc))
         ticket_id = cursor.fetchone()[0]
         
         # 3. Create ticket comment log

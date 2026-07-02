@@ -72,8 +72,8 @@ def _to_list(val):
 
 def get_ews_account():
     """Establishes connection to the Exchange Web Services mailbox."""
-    if not config.USER_EMAIL:
-        logger.warning("USER_EMAIL is not configured in environment. Bypassing Exchange connection.")
+    if not config.USER_EMAIL or not config.MAIL_PASSWORD:
+        logger.warning("USER_EMAIL or MAIL_PASSWORD is not configured in environment. Bypassing Exchange connection.")
         return None
     try:
         credentials = OAuth2LegacyCredentials(

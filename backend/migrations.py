@@ -475,9 +475,11 @@ def run_migrations():
                 message_id VARCHAR(500) PRIMARY KEY,
                 subject VARCHAR(500),
                 sender VARCHAR(255),
-                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                received_at TIMESTAMP
             );
         """)
+        cur.execute("ALTER TABLE processed_emails ADD COLUMN IF NOT EXISTS received_at TIMESTAMP;")
 
         # MSSQL Diagnostic and Report telemetry tables
         mssql_tables = [

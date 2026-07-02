@@ -264,33 +264,10 @@ def insert_log(row):
                 except Exception as ex_dedup:
                     print(f"Error checking existing ticket: {ex_dedup}")
 
-                client_email = None
-                tech_email = None
-                try:
-                    cur.execute("SELECT client_email FROM admin_clients WHERE client_name = %s LIMIT 1", (client,))
-                    row_ce = cur.fetchone()
-                    if row_ce and row_ce[0]:
-                        client_email = row_ce[0]
-                    
-                    cur.execute("SELECT client_email FROM admin_clients WHERE db_type = %s LIMIT 1", (db,))
-                    row_te = cur.fetchone()
-                    if row_te and row_te[0]:
-                        tech_email = row_te[0]
-                except Exception as ex_db:
-                    print(f"Error querying contacts: {ex_db}")
+                from db_manager import get_alert_contacts
+                resolved = get_alert_contacts(cur, client, db)
+                contact_emails = resolved["to_emails"]
 
-                recipient_list = ["dccagent@geopits.com"]
-                if client_email:
-                    recipient_list.append(client_email)
-                else:
-                    print(f"log [Client Contact Missing] - there is no client mail configured for {client}")
-                
-                if tech_email:
-                    recipient_list.append(tech_email)
-                else:
-                    print(f"log [Tech Contact Missing] - there is no technology routing mail configured for {db}")
-                
-                contact_emails = ", ".join(recipient_list)
                 
                 cur.execute("""
                     INSERT INTO tickets (
@@ -377,7 +354,6 @@ def insert_log(row):
                     t_id = create_auto_ticket(sev_clean, msg)
                     t_status = "OPEN"
 
-                # NEW INSERT (use original h as semantic_hash if starting a group)
                 cur.execute("""
                 INSERT INTO db_monitoring_logs(
                     client_name, server_name, db_type, log_type, log_source,
@@ -389,6 +365,16 @@ def insert_log(row):
                     ticket_id, ticket_status
                 )
                 VALUES(%s,%s,%s,%s,%s, %s,%s,%s, %s,%s, %s,%s, %s,%s,%s, %s,%s,%s,%s, %s,%s)
+                ON CONFLICT (log_hash) DO UPDATE SET
+                    occurrence_count = db_monitoring_logs.occurrence_count + EXCLUDED.occurrence_count,
+                    semantic_count = db_monitoring_logs.semantic_count + EXCLUDED.semantic_count,
+                    log_message = EXCLUDED.log_message,
+                    log_time = EXCLUDED.log_time,
+                    log_time_utc = EXCLUDED.log_time_utc,
+                    log_time_ist = EXCLUDED.log_time_ist,
+                    email_received_time = EXCLUDED.email_received_time,
+                    ticket_id = COALESCE(db_monitoring_logs.ticket_id, EXCLUDED.ticket_id),
+                    ticket_status = COALESCE(db_monitoring_logs.ticket_status, EXCLUDED.ticket_status);
                 """, (
                     client, server, db, l_type, source,
                     l_time, utc, ist, msg, raw,

@@ -508,6 +508,19 @@ const TicketsHub = () => {
     const [contactEmail, setContactEmail] = useState('');
     const [contactStatus, setContactStatus] = useState('Active');
 
+    const getTicketNotificationType = (ticketId) => {
+        const matching = notifications.find(n => 
+            !n.is_read && 
+            n.message && 
+            (n.message.includes(`#${ticketId}`) || n.message.toLowerCase().includes(`ticket #${ticketId}`))
+        );
+        if (!matching) return null;
+        if (matching.message.toLowerCase().includes('reply') || matching.message.toLowerCase().includes('replied') || matching.message.toLowerCase().includes('comment')) {
+            return 'reply';
+        }
+        return 'ticket';
+    };
+
     // Details & Update Modal State
     const [viewDetailTicket, setViewDetailTicket] = useState(null);
     const [selectedTicket, setSelectedTicket] = useState(null);
@@ -735,6 +748,24 @@ const TicketsHub = () => {
         }
     };
 
+    const clearNotificationsForTicket = (ticketId) => {
+        const matchingNotifs = notifications.filter(n => 
+            !n.is_read && 
+            n.message && 
+            (n.message.includes(`#${ticketId}`) || n.message.toLowerCase().includes(`ticket #${ticketId}`))
+        );
+        matchingNotifs.forEach(n => {
+            api.post(`/new-features/notifications/read/${n.id}`).catch(() => {});
+        });
+        if (matchingNotifs.length > 0) {
+            setNotifications(prev => prev.map(n => 
+                (n.message && (n.message.includes(`#${ticketId}`) || n.message.toLowerCase().includes(`ticket #${ticketId}`)))
+                ? { ...n, is_read: true }
+                : n
+            ));
+        }
+    };
+
     const handleOpenDetailsModal = (t) => {
         setViewDetailTicket(t);
         setSelectedTicket(t);
@@ -747,6 +778,9 @@ const TicketsHub = () => {
         setEditPriority(t.priority || 'Low');
         setEditAgent(t.agent || '');
         setEditDescription(t.description || '');
+        if (t && t.id) {
+            clearNotificationsForTicket(t.id);
+        }
     };
 
     const handleUpdateTicket = async (e) => {
@@ -2404,6 +2438,16 @@ const TicketsHub = () => {
             fontFamily: 'Inter, system-ui, sans-serif',
             transition: 'background 0.3s ease'
         }}>
+            <style>{`
+                @keyframes pulse-blue {
+                    0%, 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0.6); }
+                    50% { box-shadow: 0 0 0 5px rgba(37,99,235,0); }
+                }
+                @keyframes pulse-purple {
+                    0%, 100% { box-shadow: 0 0 0 0 rgba(139,92,246,0.6); }
+                    50% { box-shadow: 0 0 0 5px rgba(139,92,246,0); }
+                }
+            `}</style>
             
             {/* Header Section */}
             <header style={{ 
@@ -2631,29 +2675,64 @@ const TicketsHub = () => {
                     { id: 'incident-assignment', label: 'Incident Registration', icon: <CheckSquare size={15} /> },
                     { id: 'engineer-workspaces', label: 'Online Status Directory', icon: <Users size={15} /> },
                     { id: 'all-reply-mails', label: 'All Reply Mails', icon: <Mail size={15} /> }
-                ].map(tabItem => (
-                    <button 
-                        key={tabItem.id}
-                        onClick={() => setActiveTab(tabItem.id)}
-                        style={{ 
-                            padding: '1.1rem 4px', 
-                            background: 'none', 
-                            border: 'none', 
-                            borderBottom: activeTab === tabItem.id ? '2px solid #2563eb' : '2px solid transparent',
-                            color: activeTab === tabItem.id ? '#2563eb' : themeStyles.textMuted,
-                            fontWeight: '700',
-                            fontSize: '0.85rem',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            transition: 'all 0.2s'
-                        }}
-                    >
-                        {tabItem.icon}
-                        <span>{tabItem.label}</span>
-                    </button>
-                ))}
+                ].map(tabItem => {
+                    let hasDot = false;
+                    let dotColor = '#2563eb';
+                    let pulseAnim = 'pulse-blue';
+                    if (tabItem.id === 'incident-center') {
+                        hasDot = notifications.some(n => 
+                            !n.is_read && 
+                            n.message && 
+                            (n.message.toLowerCase().includes('new ticket') || n.message.toLowerCase().includes('created'))
+                        );
+                    } else if (tabItem.id === 'all-reply-mails') {
+                        hasDot = notifications.some(n => 
+                            !n.is_read && 
+                            n.message && 
+                            (n.message.toLowerCase().includes('reply') || n.message.toLowerCase().includes('comment') || n.message.toLowerCase().includes('replied'))
+                        );
+                        dotColor = '#8b5cf6';
+                        pulseAnim = 'pulse-purple';
+                    }
+
+                    return (
+                        <button 
+                            key={tabItem.id}
+                            onClick={() => setActiveTab(tabItem.id)}
+                            style={{ 
+                                padding: '1.1rem 4px', 
+                                background: 'none', 
+                                border: 'none', 
+                                borderBottom: activeTab === tabItem.id ? '2px solid #2563eb' : '2px solid transparent',
+                                color: activeTab === tabItem.id ? '#2563eb' : themeStyles.textMuted,
+                                fontWeight: '700',
+                                fontSize: '0.85rem',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                transition: 'all 0.2s'
+                            }}
+                        >
+                            {tabItem.icon}
+                            <span style={{ display: 'flex', alignItems: 'center' }}>
+                                {tabItem.label}
+                                {hasDot && (
+                                    <span style={{
+                                        display: 'inline-block',
+                                        width: '8px',
+                                        height: '8px',
+                                        borderRadius: '50%',
+                                        backgroundColor: dotColor,
+                                        marginLeft: '6px',
+                                        boxShadow: `0 0 6px ${dotColor}`,
+                                        animation: `${pulseAnim} 1.5s infinite ease-in-out`
+                                    }} />
+                                )}
+                            </span>
+                        </button>
+                    );
+                })}
             </div>
 
             {/* Main Content Area */}
@@ -2847,8 +2926,25 @@ const TicketsHub = () => {
                                                         {(t.company || 'G')[0].toUpperCase()}
                                                     </div>
                                                     <div>
-                                                        <h3 style={{ fontSize: '0.9rem', fontWeight: '800', margin: '0 0 4px 0', lineHeight: '1.4' }}>
+                                                        <h3 style={{ fontSize: '0.9rem', fontWeight: '800', margin: '0 0 4px 0', lineHeight: '1.4', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                             {t.ticket_name}
+                                                            {(() => {
+                                                                const type = getTicketNotificationType(t.id);
+                                                                if (!type) return null;
+                                                                const dotColor = type === 'reply' ? '#8b5cf6' : '#2563eb';
+                                                                const pulseAnim = type === 'reply' ? 'pulse-purple' : 'pulse-blue';
+                                                                return (
+                                                                    <span style={{
+                                                                        display: 'inline-block',
+                                                                        width: '8px',
+                                                                        height: '8px',
+                                                                        borderRadius: '50%',
+                                                                        backgroundColor: dotColor,
+                                                                        boxShadow: `0 0 6px ${dotColor}`,
+                                                                        animation: `${pulseAnim} 1.5s infinite ease-in-out`
+                                                                    }} title={type === 'reply' ? 'New unread reply' : 'New ticket alert'} />
+                                                                );
+                                                            })()}
                                                         </h3>
                                                         <span style={{ fontSize: '0.72rem', color: themeStyles.textMuted, display: 'block', marginBottom: '8px' }}>
                                                             {t.category || 'Support Desk Ticket'}

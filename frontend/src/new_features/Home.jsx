@@ -803,8 +803,26 @@ const Home = () => {
                             <span style={{ fontSize: '0.7rem', fontWeight: '700', color: themeStyles.textMuted, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '4px' }}>
                                 {item.subtitle}
                             </span>
-                            <h3 style={{ fontSize: '1.35rem', fontWeight: '700', marginBottom: '1rem', color: themeStyles.textMain }}>
+                            <h3 style={{ fontSize: '1.35rem', fontWeight: '700', marginBottom: '1rem', color: themeStyles.textMain, display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 {item.title}
+                                {item.path === '/tickets' && notifications.some(n => 
+                                    !n.is_read && 
+                                    n.message && 
+                                    (n.message.toLowerCase().includes('ticket') || 
+                                     n.message.toLowerCase().includes('reply') || 
+                                     n.message.toLowerCase().includes('comment') || 
+                                     n.message.toLowerCase().includes('replied'))
+                                ) && (
+                                    <span style={{
+                                        display: 'inline-block',
+                                        width: '10px',
+                                        height: '10px',
+                                        borderRadius: '50%',
+                                        backgroundColor: '#8b5cf6',
+                                        boxShadow: '0 0 10px #8b5cf6',
+                                        animation: 'pulse-purple 1.5s infinite ease-in-out'
+                                    }} />
+                                )}
                             </h3>
                             <p style={{ color: themeStyles.textMuted, fontSize: '0.88rem', lineHeight: '1.6', flex: 1 }}>
                                 {item.description}
@@ -1412,6 +1430,10 @@ const Home = () => {
                 @keyframes pulse-badge {
                     0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); }
                     50% { box-shadow: 0 0 0 4px rgba(239,68,68,0); }
+                }
+                @keyframes pulse-purple {
+                    0%, 100% { box-shadow: 0 0 0 0 rgba(139,92,246,0.6); }
+                    50% { box-shadow: 0 0 0 5px rgba(139,92,246,0); }
                 }
             `}</style>
         </div>

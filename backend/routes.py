@@ -531,7 +531,7 @@ def create_ticket(ticket: TicketCreate, user: dict = Depends(get_current_user_lo
             cur.execute("""
                 INSERT INTO notifications (username, message, is_read)
                 VALUES (%s, %s, FALSE);
-            """, (ticket.agent, f"New ticket '{ticket.ticket_name}' has been assigned to you by '{creator}'",))
+            """, (ticket.agent, f"New ticket #{ticket_id} '{ticket.ticket_name}' has been assigned to you by '{creator}'",))
         
         conn.commit()
         cache_manager.invalidate("tickets:")
@@ -1664,6 +1664,37 @@ def get_notifications(user: dict = Depends(get_current_user_local)):
     finally:
         conn.close()
 
+
+@router.get("/notifications/unread-counts")
+def get_unread_counts(user: dict = Depends(get_current_user_local)):
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        username = user.get("username", "Anonymous")
+        full_name = user.get("full_name", user.get("fullName", ""))
+        search_terms = { 'global', 'admin', username.lower() }
+        if full_name:
+            search_terms.add(full_name.lower())
+
+        cur.execute("""
+            SELECT 
+                COUNT(*) FILTER (WHERE NOT is_read AND (message ILIKE '%%new ticket%%' OR message ILIKE '%%created%%')) as new_tickets,
+                COUNT(*) FILTER (WHERE NOT is_read AND (message ILIKE '%%reply%%' OR message ILIKE '%%comment%%' OR message ILIKE '%%replied%%')) as new_replies,
+                COUNT(*) FILTER (WHERE NOT is_read) as total_unread
+            FROM notifications 
+            WHERE LOWER(username) = ANY(%s);
+        """, (list(search_terms),))
+        row = cur.fetchone()
+        return {
+            "new_tickets": row[0] or 0,
+            "new_replies": row[1] or 0,
+            "total_unread": row[2] or 0
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
 @router.post("/notifications/read-all")
 def mark_all_notifications_read(user: dict = Depends(get_current_user_local)):
     conn = get_connection()
@@ -2034,6 +2065,7 @@ def update_ticket(ticket_id: int, ticket: TicketAdminUpdate, user: dict = Depend
                     INSERT INTO db_archived_logs ({common_cols})
                     SELECT {common_cols} FROM db_monitoring_logs 
                     WHERE TRIM(log_hash) = TRIM(%s)
+                    ON CONFLICT (log_hash) DO NOTHING
                 """, (h,))
                 cur.execute("DELETE FROM db_monitoring_logs WHERE TRIM(log_hash) = TRIM(%s)", (h,))
             
@@ -2047,6 +2079,7 @@ def update_ticket(ticket_id: int, ticket: TicketAdminUpdate, user: dict = Depend
                     INSERT INTO db_monitoring_logs ({common_cols})
                     SELECT {common_cols} FROM db_archived_logs 
                     WHERE TRIM(log_hash) = TRIM(%s)
+                    ON CONFLICT (log_hash) DO NOTHING
                 """, (h,))
                 cur.execute("DELETE FROM db_archived_logs WHERE TRIM(log_hash) = TRIM(%s)", (h,))
             
@@ -2058,7 +2091,7 @@ def update_ticket(ticket_id: int, ticket: TicketAdminUpdate, user: dict = Depend
             cur.execute("""
                 INSERT INTO notifications (username, message, is_read)
                 VALUES (%s, %s, FALSE);
-            """, (ticket.agent, f"Ticket '{t_name}' has been updated to status '{ticket.status}' by '{creator}'",))
+            """, (ticket.agent, f"Ticket #{ticket_id} '{t_name}' has been updated to status '{ticket.status}' by '{creator}'",))
         
         conn.commit()
         cache_manager.invalidate("tickets:")
@@ -2093,7 +2126,7 @@ def delete_ticket(ticket_id: int, user: dict = Depends(get_current_user_local)):
         cur.execute("DELETE FROM tickets WHERE id = %s;", (ticket_id,))
         
         creator = user.get("username", "admin")
-        notify_msg = f"Incident Ticket '{tname}' was deleted by admin '{creator}'"
+        notify_msg = f"Incident Ticket #{ticket_id} '{tname}' was deleted by admin '{creator}'"
         cur.execute("INSERT INTO notifications (username, message, is_read) VALUES ('global', %s, FALSE);", (notify_msg,))
         
         conn.commit()

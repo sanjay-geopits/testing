@@ -27,6 +27,8 @@ CLIENT_ALLOWED_METRICS: dict[str, set[str]] = {
     "RetailScan": _SAMPLE_LOG_TYPES,
     "Cnergee":    _SAMPLE_LOG_TYPES,
     "FlowGlobal": _SAMPLE_LOG_TYPES,
+    "CredoPay":   _SAMPLE_LOG_TYPES,
+    "Artfine":    _SAMPLE_LOG_TYPES,
 }
 
 
@@ -146,6 +148,8 @@ def _identify_client(subject: str) -> Optional[str]:
     if "retailscan" in s: return "RetailScan"
     if "cnergee"    in s: return "Cnergee"
     if "flowglobal" in s: return "FlowGlobal"
+    if "credopay"   in s: return "CredoPay"
+    if "artfine"    in s: return "Artfine"
     return None
 
 
@@ -157,6 +161,8 @@ _CLIENT_DB = {
     "RetailScan": "PostgreSQL",   
     "Cnergee":    "MySQL",
     "FlowGlobal": "MySQL",
+    "CredoPay":   "MySQL",
+    "Artfine":    "MySQL",
 }
 
 
@@ -237,6 +243,8 @@ _CLIENT_PARSER = {
     "RetailScan": lambda nc: _parse_sample_client(nc, "RetailScan"),
     "Cnergee":    lambda nc: _parse_sample_client(nc, "Cnergee"),
     "FlowGlobal": lambda nc: _parse_sample_client(nc, "FlowGlobal"),
+    "CredoPay":   lambda nc: _parse_sample_client(nc, "CredoPay"),
+    "Artfine":    lambda nc: _parse_sample_client(nc, "Artfine"),
 }
 
 

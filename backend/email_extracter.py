@@ -856,12 +856,12 @@ def process_incoming_reply(item) -> bool:
                                 to_list.append(email)
                     
                     if not to_list:
-                        client_email, _ = lookup_client_contact_details(cur, company, business_unit)
-                        if client_email:
-                            for email in re.split(r'[;,]', client_email):
-                                email = email.strip()
-                                if email and email not in to_list:
-                                    to_list.append(email)
+                        from db_manager import get_alert_contacts
+                        resolved = get_alert_contacts(cur, company, business_unit)
+                        for email in re.split(r'[;,]', resolved["to_emails"]):
+                            email = email.strip()
+                            if email and email not in to_list:
+                                to_list.append(email)
                                     
                     recipient_role = "Client Operations"
                 
@@ -1125,30 +1125,69 @@ class GraphQuery:
             except Exception as e:
                 print(f"Error fetching mail folders: {e}")
 
-        # ── Build URL using receivedDateTime watermark (NOT isRead) ──────────
-        # Graph API supports $filter=receivedDateTime ge {dt} combined with
-        # $orderBy=receivedDateTime asc because the filter and order fields match.
+        # ── Fetch Messages (Watermark + Unread) ──────────────────────────────
         messages = []
         try:
+            import datetime as _dt
+            vals = []
+
             if self.since_dt:
-                filter_str = f"receivedDateTime ge {self.since_dt}"
-                order_str  = "receivedDateTime asc"
+                # Fetch messages ge since_dt
+                url_since = (f"https://graph.microsoft.com/v1.0/users/{self.user_email}"
+                             f"/mailFolders/{folder_id}/messages?$top={limit}"
+                             f"&$filter=receivedDateTime ge {self.since_dt}"
+                             f"&$orderBy=receivedDateTime asc")
+                r = requests.get(url_since, headers=headers, timeout=15)
+                if r.status_code == 200:
+                    vals.extend(r.json().get("value", []))
+                else:
+                    print(f"Error fetching watermark messages: {r.status_code} {r.text}")
             else:
-                filter_str = ""
-                order_str  = "receivedDateTime desc"
+                # Fetch recent messages (no filter, orderBy desc)
+                url_all = (f"https://graph.microsoft.com/v1.0/users/{self.user_email}"
+                           f"/mailFolders/{folder_id}/messages?$top={limit}"
+                           f"&$orderBy=receivedDateTime desc")
+                r = requests.get(url_all, headers=headers, timeout=15)
+                if r.status_code == 200:
+                    vals.extend(r.json().get("value", []))
+                else:
+                    print(f"Error fetching all messages: {r.status_code} {r.text}")
 
-            url = (f"https://graph.microsoft.com/v1.0/users/{self.user_email}"
-                   f"/mailFolders/{folder_id}/messages?$top={limit}")
-            if filter_str:
-                url += f"&$filter={filter_str}"
-            url += f"&$orderBy={order_str}"
-
-            r = requests.get(url, headers=headers, timeout=15)
+            # Always fetch unread messages to ensure none are missed
+            url_unread = (f"https://graph.microsoft.com/v1.0/users/{self.user_email}"
+                          f"/mailFolders/{folder_id}/messages?$top={limit}"
+                          f"&$filter=isRead eq false"
+                          f"&$orderBy=receivedDateTime asc")
+            r = requests.get(url_unread, headers=headers, timeout=15)
             if r.status_code == 200:
-                for v in r.json().get("value", []):
-                    messages.append(GraphMailItem(v, self.access_token, self.user_email))
+                vals.extend(r.json().get("value", []))
             else:
-                print(f"Error fetching messages from Graph API: {r.status_code} {r.text}")
+                print(f"Error fetching unread messages: {r.status_code} {r.text}")
+
+            # Deduplicate by message ID
+            seen_ids = set()
+            unique_vals = []
+            for v in vals:
+                m_id = v.get("id")
+                if m_id not in seen_ids:
+                    seen_ids.add(m_id)
+                    unique_vals.append(v)
+
+            # Sort combined results by receivedDateTime ascending so they are processed in order
+            def parse_dt(x):
+                rdt = x.get("receivedDateTime", "")
+                if rdt:
+                    try:
+                        return _dt.datetime.fromisoformat(rdt.replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+                return _dt.datetime.min.replace(tzinfo=_dt.timezone.utc)
+
+            unique_vals.sort(key=parse_dt)
+
+            for v in unique_vals[:limit]:
+                messages.append(GraphMailItem(v, self.access_token, self.user_email))
+
         except Exception as e:
             print(f"Error fetching messages via Graph API: {e}")
 
@@ -1412,45 +1451,15 @@ def parse_db_uptime_report(body, client, server, subject=""):
     return services_found, server
 
 def lookup_client_contact_details(cursor, client_name, db_type):
-    try:
-        cursor.execute("""
-            SELECT client_email, phone_number 
-            FROM admin_clients 
-            WHERE LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) 
-              AND LOWER(TRIM(db_type)) = LOWER(TRIM(%s))
-            LIMIT 1;
-        """, (client_name, db_type))
-        row = cursor.fetchone()
-        if row and row[0]:
-            return row[0], row[1]
-    except Exception as e:
-        print(f"Error checking admin_clients contacts: {e}")
-        
-    try:
-        cursor.execute("""
-            SELECT client_email, phone_number 
-            FROM client_access 
-            WHERE LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) 
-              AND LOWER(TRIM(technology)) = LOWER(TRIM(%s))
-            LIMIT 1;
-        """, (client_name, db_type))
-        row = cursor.fetchone()
-        if row and row[0]:
-            return row[0], row[1]
-    except Exception as e:
-        print(f"Error checking client_access contacts: {e}")
-        
-    return None, None
+    from db_manager import get_alert_contacts
+    res = get_alert_contacts(cursor, client_name, db_type)
+    return res["client_email"], res["phone_number"]
 
 def get_technology_alert_email(cursor, db_type):
-    try:
-        cursor.execute("SELECT alert_email FROM technology_alerts_config WHERE LOWER(technology) = LOWER(%s);", (db_type,))
-        row = cursor.fetchone()
-        if row and row[0]:
-            return row[0]
-    except Exception as e:
-        print(f"Error reading technology_alerts_config: {e}")
-    return None
+    from db_manager import get_alert_contacts
+    res = get_alert_contacts(cursor, "", db_type)
+    return res["tech_email"]
+
 
 
 def check_and_trigger_uptime_alerts(cur, client, server, db_type, svc, restart_dt, received):
@@ -1484,27 +1493,10 @@ def check_and_trigger_uptime_alerts(cur, client, server, db_type, svc, restart_d
         if curr_naive != prev_naive:
             has_restarted = True
 
-    # Get contact emails
-    client_email, _ = lookup_client_contact_details(cur, client, db_type)
-    tech_email = get_technology_alert_email(cur, db_type)
-
-    if not client_email:
-        print(f"[ALERT ROUTING] there is no client mail")
-    if not tech_email:
-        print(f"[ALERT ROUTING] there is no technology alert mail")
-
-    to_list = ["dccagent@geopits.com"]
-    if client_email:
-        for e in re.split(r'[;,]', client_email):
-            e = e.strip()
-            if e and e not in to_list:
-                to_list.append(e)
-    if tech_email:
-        for e in re.split(r'[;,]', tech_email):
-            e = e.strip()
-            if e and e not in to_list:
-                to_list.append(e)
-    to_emails = ", ".join(to_list)
+    # Resolve contact emails
+    from db_manager import get_alert_contacts
+    resolved = get_alert_contacts(cur, client, db_type)
+    to_emails = resolved["to_emails"]
     cc_emails = None
 
     try:
@@ -1538,7 +1530,7 @@ def check_and_trigger_uptime_alerts(cur, client, server, db_type, svc, restart_d
             
             cur.execute("""
                 INSERT INTO tickets (business_unit, company, contact, ticket_name, category, status, priority, agent, description, created_by, created_at)
-                VALUES (%s, %s, %s, %s, 'Logs', 'OPEN', 'High', 'SYSTEM', %s, 'System', %s)
+                VALUES (%s, %s, %s, %s, 'Alert', 'OPEN', 'High', 'SYSTEM', %s, 'System', %s)
                 RETURNING id;
             """, (db_type, client, to_emails, ticket_name, description, received))
             new_ticket_id = cur.fetchone()[0]
@@ -1636,7 +1628,7 @@ def check_and_trigger_uptime_alerts(cur, client, server, db_type, svc, restart_d
             
             cur.execute("""
                 INSERT INTO tickets (business_unit, company, contact, ticket_name, category, status, priority, agent, description, created_by, created_at)
-                VALUES (%s, %s, %s, %s, 'Logs', 'OPEN', 'Medium', 'SYSTEM', %s, 'System', %s)
+                VALUES (%s, %s, %s, %s, 'Alert', 'OPEN', 'Medium', 'SYSTEM', %s, 'System', %s)
                 RETURNING id;
             """, (db_type, client, to_emails, ticket_name, description, received))
             new_ticket_id = cur.fetchone()[0]
@@ -2125,7 +2117,7 @@ def process_mail(item, override_client=None, override_server=None, override_db=N
                             RETURNING id;
                         """, (
                             'MSSQL', client, sender_email, ticket_name,
-                            'Logs', 'OPEN', ticket_priority, 'SYSTEM',
+                            'Alert', 'OPEN', ticket_priority, 'SYSTEM',
                             description, 'System', received
                         ))
                         new_ticket_id = cur.fetchone()[0]
@@ -2148,29 +2140,12 @@ def process_mail(item, override_client=None, override_server=None, override_db=N
                         cur.execute("""
                             INSERT INTO notifications (username, message, is_read)
                             VALUES (%s, %s, FALSE);
-                        """, ('global', f"New ticket '{ticket_name}' has been created automatically by System",))
+                        """, ('global', f"New ticket #{new_ticket_id} '{ticket_name}' has been created automatically by System",))
                         
                         # Resolve contact emails for this client/tech
-                        client_email, _ = lookup_client_contact_details(cur, client, 'MSSQL')
-                        tech_email = get_technology_alert_email(cur, 'MSSQL')
-                        
-                        if not client_email:
-                            print(f"[ALERT ROUTING] there is no client mail")
-                        if not tech_email:
-                            print(f"[ALERT ROUTING] there is no technology alert mail")
-                            
-                        to_list = ["dccagent@geopits.com"]
-                        if client_email:
-                            for e in re.split(r'[;,]', client_email):
-                                e = e.strip()
-                                if e and e not in to_list:
-                                    to_list.append(e)
-                        if tech_email:
-                            for e in re.split(r'[;,]', tech_email):
-                                e = e.strip()
-                                if e and e not in to_list:
-                                    to_list.append(e)
-                        to_emails = ", ".join(to_list)
+                        from db_manager import get_alert_contacts
+                        resolved = get_alert_contacts(cur, client, 'MSSQL')
+                        to_emails = resolved["to_emails"]
                         cc_emails = None
 
                         # Construct a premium HTML email layout for the alert
@@ -2276,18 +2251,9 @@ def process_mail(item, override_client=None, override_server=None, override_db=N
 
                         # Send closure notification email to client + tech contacts
                         try:
-                            cl_email, _ = lookup_client_contact_details(cur, client, 'MSSQL')
-                            t_email = get_technology_alert_email(cur, 'MSSQL')
-                            to_list = ["dccagent@geopits.com"]
-                            for _e in re.split(r'[;,]', cl_email or ""):
-                                _e = _e.strip()
-                                if _e and _e not in to_list:
-                                    to_list.append(_e)
-                            for _e in re.split(r'[;,]', t_email or ""):
-                                _e = _e.strip()
-                                if _e and _e not in to_list:
-                                    to_list.append(_e)
-                            closure_to = ", ".join(to_list)
+                            from db_manager import get_alert_contacts
+                            resolved = get_alert_contacts(cur, client, 'MSSQL')
+                            closure_to = resolved["to_emails"]
                             closure_time = received.strftime('%Y-%m-%d %H:%M:%S') if received else ''
                             closure_subject = f"[Ticket #{ticket_id}] RESOLVED: {closed_ticket_name}"
                             closure_body = f"""
@@ -2560,7 +2526,7 @@ def get_last_sync_time(folder_hint=None, default_lookback_hours=24, buffer_minut
     return watermark.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def get_folder_watermark(folder_name, default_lookback_hours=24):
+def get_folder_watermark(folder_name, default_lookback_hours=168):
     import json
     import os
     import datetime as _dt
@@ -2571,8 +2537,8 @@ def get_folder_watermark(folder_name, default_lookback_hours=24):
                 data = json.load(f)
             if folder_name in data:
                 val = _dt.datetime.fromisoformat(data[folder_name].replace("Z", "+00:00"))
-                # Subtract 30 minutes buffer
-                buffer_time = val - _dt.timedelta(minutes=30)
+                # Subtract 12 hours buffer (720 minutes) to prevent time drift and delivery delays from skipping emails
+                buffer_time = val - _dt.timedelta(hours=12)
                 return buffer_time.strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception as e:
         print(f"[WATERMARK] Error reading watermark for {folder_name}: {e}")
@@ -2840,8 +2806,11 @@ Check Time: 2026-06-16 08:00 UTC"""
                 if msg_id:
                     try:
                         _pc = get_connection(); _pcc = _pc.cursor()
-                        _pcc.execute("INSERT INTO processed_emails (message_id, subject, sender) VALUES (%s, %s, %s) ON CONFLICT (message_id) DO NOTHING",
-                                     (str(msg_id), subject[:490], str(sender_email)[:240]))
+                        _pcc.execute("""
+                            INSERT INTO processed_emails (message_id, subject, sender, received_at) 
+                            VALUES (%s, %s, %s, %s) 
+                            ON CONFLICT (message_id) DO NOTHING
+                        """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
                         _pc.commit(); _pcc.close(); _pc.close()
                     except Exception: pass
                 continue
@@ -2859,17 +2828,17 @@ Check Time: 2026-06-16 08:00 UTC"""
         if msg_id:
             try:
                 _pc = get_connection(); _pcc = _pc.cursor()
-                _pcc.execute("INSERT INTO processed_emails (message_id, subject, sender) VALUES (%s, %s, %s) ON CONFLICT (message_id) DO NOTHING",
-                             (str(msg_id), subject[:490], str(sender_email)[:240]))
+                _pcc.execute("""
+                    INSERT INTO processed_emails (message_id, subject, sender, received_at) 
+                    VALUES (%s, %s, %s, %s) 
+                    ON CONFLICT (message_id) DO NOTHING
+                """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
                 _pc.commit(); _pcc.close(); _pc.close()
             except Exception: pass
 
     if mssql_items:
         try:
-            if len(mssql_items) < 200:
-                save_folder_watermark("MSSQL Alert", _dt.datetime.utcnow())
-            else:
-                save_folder_watermark("MSSQL Alert", mssql_items[-1].datetime_received)
+            save_folder_watermark("MSSQL Alert", mssql_items[-1].datetime_received)
         except Exception:
             try: save_folder_watermark("MSSQL Alert")
             except Exception: pass
@@ -2910,8 +2879,11 @@ Check Time: 2026-06-16 08:00 UTC"""
             if msg_id:
                 try:
                     _pc = get_connection(); _pcc = _pc.cursor()
-                    _pcc.execute("INSERT INTO processed_emails (message_id, subject, sender) VALUES (%s, %s, %s) ON CONFLICT (message_id) DO NOTHING",
-                                 (str(msg_id), subject[:490], "SYSTEM"))
+                    _pcc.execute("""
+                        INSERT INTO processed_emails (message_id, subject, sender, received_at) 
+                        VALUES (%s, %s, %s, %s) 
+                        ON CONFLICT (message_id) DO NOTHING
+                    """, (str(msg_id), subject[:490], "SYSTEM", item.datetime_received.replace(tzinfo=None)))
                     _pc.commit(); _pcc.close(); _pc.close()
                 except Exception: pass
             continue
@@ -2919,7 +2891,11 @@ Check Time: 2026-06-16 08:00 UTC"""
         try:
             if msg_id:
                 _dc = get_connection(); _dcc = _dc.cursor()
-                _dcc.execute("SELECT 1 FROM processed_emails WHERE message_id = %s LIMIT 1", (str(msg_id),))
+                _dcc.execute("""
+                    SELECT 1 FROM processed_emails 
+                    WHERE message_id = %s OR (subject = %s AND received_at = %s)
+                    LIMIT 1
+                """, (str(msg_id), subject[:490], item.datetime_received.replace(tzinfo=None)))
                 if _dcc.fetchone():
                     _dcc.close(); _dc.close()
                     if not item.is_read:
@@ -2940,8 +2916,11 @@ Check Time: 2026-06-16 08:00 UTC"""
             if msg_id:
                 try:
                     _pc = get_connection(); _pcc = _pc.cursor()
-                    _pcc.execute("INSERT INTO processed_emails (message_id, subject, sender) VALUES (%s, %s, %s) ON CONFLICT (message_id) DO NOTHING",
-                                 (str(msg_id), subject[:490], str(sender_email)[:240]))
+                    _pcc.execute("""
+                        INSERT INTO processed_emails (message_id, subject, sender, received_at) 
+                        VALUES (%s, %s, %s, %s) 
+                        ON CONFLICT (message_id) DO NOTHING
+                    """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
                     _pc.commit(); _pcc.close(); _pc.close()
                 except Exception: pass
             continue
@@ -2969,17 +2948,17 @@ Check Time: 2026-06-16 08:00 UTC"""
         if msg_id:
             try:
                 _pc = get_connection(); _pcc = _pc.cursor()
-                _pcc.execute("INSERT INTO processed_emails (message_id, subject, sender) VALUES (%s, %s, %s) ON CONFLICT (message_id) DO NOTHING",
-                             (str(msg_id), subject[:490], str(sender_email)[:240]))
+                _pcc.execute("""
+                    INSERT INTO processed_emails (message_id, subject, sender, received_at) 
+                    VALUES (%s, %s, %s, %s) 
+                    ON CONFLICT (message_id) DO NOTHING
+                """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
                 _pc.commit(); _pcc.close(); _pc.close()
             except Exception: pass
 
     if ai_items:
         try:
-            if len(ai_items) < 200:
-                save_folder_watermark("Ai-report-automation", _dt.datetime.utcnow())
-            else:
-                save_folder_watermark("Ai-report-automation", ai_items[-1].datetime_received)
+            save_folder_watermark("Ai-report-automation", ai_items[-1].datetime_received)
         except Exception:
             try: save_folder_watermark("Ai-report-automation")
             except Exception: pass
@@ -2993,6 +2972,7 @@ Check Time: 2026-06-16 08:00 UTC"""
     # ════════════════════════════════════════════════════════════════════════
     print("\n[FOLDER 3] Reading MySQL-Mongo-Postgres-DB folder — DB & Table size reports...")
     _db_size_folder_names = [
+        "MySQL Mongo Postgres- DB Size",
         "MySQL-Mongo-Postgres-DB",
         "MySQL Mongo Postgres- DB & Table Size",
         "MySQL Mongo Postgres-DB",
@@ -3034,8 +3014,11 @@ Check Time: 2026-06-16 08:00 UTC"""
             if msg_id:
                 try:
                     _pc = get_connection(); _pcc = _pc.cursor()
-                    _pcc.execute("INSERT INTO processed_emails (message_id, subject, sender) VALUES (%s, %s, %s) ON CONFLICT (message_id) DO NOTHING",
-                                 (str(msg_id), subject[:490], "SYSTEM"))
+                    _pcc.execute("""
+                        INSERT INTO processed_emails (message_id, subject, sender, received_at) 
+                        VALUES (%s, %s, %s, %s) 
+                        ON CONFLICT (message_id) DO NOTHING
+                    """, (str(msg_id), subject[:490], "SYSTEM", item.datetime_received.replace(tzinfo=None)))
                     _pc.commit(); _pcc.close(); _pc.close()
                 except Exception: pass
             continue
@@ -3043,7 +3026,11 @@ Check Time: 2026-06-16 08:00 UTC"""
         try:
             if msg_id:
                 _dc = get_connection(); _dcc = _dc.cursor()
-                _dcc.execute("SELECT 1 FROM processed_emails WHERE message_id = %s LIMIT 1", (str(msg_id),))
+                _dcc.execute("""
+                    SELECT 1 FROM processed_emails 
+                    WHERE message_id = %s OR (subject = %s AND received_at = %s)
+                    LIMIT 1
+                """, (str(msg_id), subject[:490], item.datetime_received.replace(tzinfo=None)))
                 if _dcc.fetchone():
                     _dcc.close(); _dc.close()
                     if not item.is_read:
@@ -3061,8 +3048,11 @@ Check Time: 2026-06-16 08:00 UTC"""
             if msg_id:
                 try:
                     _pc = get_connection(); _pcc = _pc.cursor()
-                    _pcc.execute("INSERT INTO processed_emails (message_id, subject, sender) VALUES (%s, %s, %s) ON CONFLICT (message_id) DO NOTHING",
-                                 (str(msg_id), subject[:490], str(sender_email)[:240]))
+                    _pcc.execute("""
+                        INSERT INTO processed_emails (message_id, subject, sender, received_at) 
+                        VALUES (%s, %s, %s, %s) 
+                        ON CONFLICT (message_id) DO NOTHING
+                    """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
                     _pc.commit(); _pcc.close(); _pc.close()
                 except Exception: pass
             continue
@@ -3086,17 +3076,17 @@ Check Time: 2026-06-16 08:00 UTC"""
         if msg_id:
             try:
                 _pc = get_connection(); _pcc = _pc.cursor()
-                _pcc.execute("INSERT INTO processed_emails (message_id, subject, sender) VALUES (%s, %s, %s) ON CONFLICT (message_id) DO NOTHING",
-                             (str(msg_id), subject[:490], str(sender_email)[:240]))
+                _pcc.execute("""
+                    INSERT INTO processed_emails (message_id, subject, sender, received_at) 
+                    VALUES (%s, %s, %s, %s) 
+                    ON CONFLICT (message_id) DO NOTHING
+                """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
                 _pc.commit(); _pcc.close(); _pc.close()
             except Exception: pass
 
     if db_size_items:
         try:
-            if len(db_size_items) < 200:
-                save_folder_watermark("MySQL-Mongo-Postgres-DB", _dt.datetime.utcnow())
-            else:
-                save_folder_watermark("MySQL-Mongo-Postgres-DB", db_size_items[-1].datetime_received)
+            save_folder_watermark("MySQL-Mongo-Postgres-DB", db_size_items[-1].datetime_received)
         except Exception:
             try: save_folder_watermark("MySQL-Mongo-Postgres-DB")
             except Exception: pass
@@ -3119,11 +3109,18 @@ Check Time: 2026-06-16 08:00 UTC"""
 
         # ── Load processed IDs and compute inbox watermark ────────────────────
         processed_ids = set()
+        processed_keys = set()
         try:
             conn = get_connection()
             cur = conn.cursor()
-            cur.execute("SELECT message_id FROM processed_emails;")
-            processed_ids = {row[0] for row in cur.fetchall()}
+            cur.execute("SELECT message_id, subject, received_at FROM processed_emails;")
+            for row in cur.fetchall():
+                if row[0]:
+                    processed_ids.add(row[0])
+                if row[1] and row[2]:
+                    sub_norm = str(row[1]).strip()
+                    recv_norm = row[2].replace(tzinfo=None) if hasattr(row[2], 'replace') else row[2]
+                    processed_keys.add((sub_norm, recv_norm))
             cur.close()
             conn.close()
         except Exception as load_err:
@@ -3135,13 +3132,21 @@ Check Time: 2026-06-16 08:00 UTC"""
         inbox_items = list(inbox.since(inbox_sync_dt).order_by('datetime_received')[:200])
         print(f"[INBOX] Found {len(inbox_items)} inbox emails to evaluate in this cycle.")
 
-        def mark_as_processed(m_id, sub, snd):
+        def mark_as_processed(m_id, sub, snd, rcv_at=None):
             try:
+                if rcv_at is None:
+                    try:
+                        rcv_at = item.datetime_received
+                    except Exception:
+                        import datetime
+                        rcv_at = datetime.datetime.utcnow()
                 conn = get_connection()
                 cur = conn.cursor()
                 cur.execute(
-                    "INSERT INTO processed_emails (message_id, subject, sender) VALUES (%s, %s, %s) ON CONFLICT (message_id) DO NOTHING;",
-                    (m_id, (sub or "")[:490], (snd or "")[:240])
+                    """INSERT INTO processed_emails (message_id, subject, sender, received_at) 
+                       VALUES (%s, %s, %s, %s) 
+                       ON CONFLICT (message_id) DO NOTHING;""",
+                    (m_id, (sub or "")[:490], (snd or "")[:240], rcv_at.replace(tzinfo=None) if hasattr(rcv_at, 'replace') else rcv_at)
                 )
                 conn.commit()
                 cur.close()
@@ -3150,14 +3155,16 @@ Check Time: 2026-06-16 08:00 UTC"""
                 print(f"[REPLY FILTER] Error marking message {m_id} as processed: {e_proc}")
         
         for item in inbox_items:
+            subject = (item.subject or "").strip()
             # Determine unique message ID
             msg_id = getattr(item, "id", None) or getattr(item, "message_id", None)
             if not msg_id:
-                msg_hash = ((item.subject or "") + str(getattr(item, "datetime_received", "")) + str(getattr(item, "datetime_sent", "")))
+                msg_hash = (subject + str(getattr(item, "datetime_received", "")) + str(getattr(item, "datetime_sent", "")))
                 msg_id = hashlib.sha256(msg_hash.encode()).hexdigest()
 
             # Skip already-processed mails (in-memory set loaded above)
-            if str(msg_id) in processed_ids:
+            item_recv = item.datetime_received.replace(tzinfo=None) if hasattr(item.datetime_received, 'replace') else item.datetime_received
+            if str(msg_id) in processed_ids or (subject, item_recv) in processed_keys:
                 # Mark as read on exchange too so it stops appearing as unread
                 if not item.is_read:
                     try:
@@ -3168,7 +3175,6 @@ Check Time: 2026-06-16 08:00 UTC"""
                 continue
 
             time.sleep(0.5)
-            subject = (item.subject or "").strip()
 
             # Skip Maxhealthcare emails
             _subj_clean = re.sub(r'MAX\s*Healthcare|MAXHealthcare', 'maxhealthcare', subject, flags=re.IGNORECASE).lower()
@@ -3220,8 +3226,6 @@ Check Time: 2026-06-16 08:00 UTC"""
             is_reply_or_fwd = bool(re.match(r'^\s*(re|fw|fwd|reply|forward|aw|wg|rv)\s*:\s*', subject, re.IGNORECASE))
             system_email = (USER or "dccagent@geopits.com").lower().strip()
 
-            is_rds = bool(subject and _is_rds_mail(subject))
-
             client_t, server_t, db_t, log_type_t = parse_subject(subject)
             is_telemetry = False
             if client_t and log_type_t in ["error_log", "event_log", "agent_log", "db_uptime", "mssql_alert", "long_running_queries"]:
@@ -3243,6 +3247,8 @@ Check Time: 2026-06-16 08:00 UTC"""
                     client_t = client_t or "Unknown"
                     server_t = server_t or "Unknown"
                     db_t = db_t or "MSSQL"
+
+            is_rds = bool(subject and _is_rds_mail(subject) and not is_telemetry)
 
             subj_lower_storage = subject.lower()
             is_storage = (
@@ -3416,10 +3422,7 @@ Check Time: 2026-06-16 08:00 UTC"""
                     
         if inbox_items:
             try:
-                if len(inbox_items) < 200:
-                    save_folder_watermark("Inbox", _dt.datetime.utcnow())
-                else:
-                    save_folder_watermark("Inbox", inbox_items[-1].datetime_received)
+                save_folder_watermark("Inbox", inbox_items[-1].datetime_received)
             except Exception:
                 try: save_folder_watermark("Inbox")
                 except Exception: pass
