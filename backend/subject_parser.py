@@ -368,6 +368,8 @@ def parse_subject(subject):
             client = "360tf"
         elif c_lower == "artfine":
             client = "Artfine"
+        elif c_lower == "maxhealthcare":
+            client = "Maxhealthcare"
 
     return client, server, db, log_type
 

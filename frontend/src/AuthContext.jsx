@@ -66,37 +66,37 @@ export const AuthProvider = ({ children }) => {
         refreshLogo();
     }, []);
 
+    const fetchProfile = () => {
+        if (!token) return;
+        try {
+            const decoded = jwtDecode(token);
+            api.get('/me').then(res => {
+                setUser({
+                    username: decoded.sub,
+                    fullName: res.data.full_name || res.data.fullName,
+                    profilePic: res.data.profile_pic || res.data.profilePic,
+                    email: res.data.email,
+                    role: res.data.role,
+                    isAdmin: res.data.isAdmin, // Trust backend flag
+                    isClientUser: res.data.isClientUser,
+                    clientAccessDisabled: res.data.clientAccessDisabled
+                });
+            }).catch(err => {
+                console.error("Profile fetch error:", err);
+                if (!user) setUser({ username: decoded.sub });
+            }).finally(() => {
+                setLoading(false);
+            });
+        } catch (err) {
+            console.error("Invalid token on load:", err);
+            logout();
+            setLoading(false);
+        }
+    };
+
     useEffect(() => {
         if (token) {
             api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-            
-            const fetchProfile = () => {
-                try {
-                    const decoded = jwtDecode(token);
-                    api.get('/me').then(res => {
-                        setUser({
-                            username: decoded.sub,
-                            fullName: res.data.full_name || res.data.fullName,
-                            profilePic: res.data.profile_pic || res.data.profilePic,
-                            email: res.data.email,
-                            role: res.data.role,
-                            isAdmin: res.data.isAdmin, // Trust backend flag
-                            isClientUser: res.data.isClientUser,
-                            clientAccessDisabled: res.data.clientAccessDisabled
-                        });
-                    }).catch(err => {
-                        console.error("Profile fetch error:", err);
-                        if (!user) setUser({ username: decoded.sub });
-                    }).finally(() => {
-                        setLoading(false);
-                    });
-                } catch (err) {
-                    console.error("Invalid token on load:", err);
-                    logout();
-                    setLoading(false);
-                }
-            };
-
             fetchProfile();
             
             // Heartbeat: update role and active status every 30 seconds for real-time promotion
@@ -147,7 +147,7 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     return (
-        <AuthContext.Provider value={{ user, token, login, logout, loading, logoUrl, refreshLogo }}>
+        <AuthContext.Provider value={{ user, token, login, logout, loading, logoUrl, refreshLogo, refreshProfile: fetchProfile }}>
             {children}
         </AuthContext.Provider>
     );

@@ -83,6 +83,7 @@ const ReportsHub = () => {
     const [success, setSuccess] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedTechs, setSelectedTechs] = useState(['MySQL', 'MSSQL', 'PostgreSQL', 'MongoDB', 'Oracle']);
     
     // Email sharing state variables
     const [emailShareModalReport, setEmailShareModalReport] = useState(null);
@@ -414,10 +415,12 @@ const ReportsHub = () => {
         }
     }, [viewingReport, modalTab]);
 
-    const filteredClients = clients.filter(c => 
-        c.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        c.tech.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filteredClients = clients.filter(c => {
+        const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                             c.tech.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesTech = selectedTechs.some(t => t.toLowerCase() === c.tech.toLowerCase());
+        return matchesSearch && matchesTech;
+    });
 
     const filteredReports = reports.filter(r => {
         const matchesMonth = filterMonth ? r.month.toLowerCase() === filterMonth.toLowerCase() : true;
@@ -682,6 +685,57 @@ const ReportsHub = () => {
                             <span style={{ fontSize: '0.8rem', color: themeStyles.textMuted }}>
                                 Enforcing strict aggregate database-to-report synchronization metrics.
                             </span>
+                        </div>
+
+                        {/* Technology Filter Toggles */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', background: themeStyles.cardBg, border: themeStyles.cardBorder, padding: '12px 18px', borderRadius: '12px' }}>
+                            <span style={{ fontSize: '0.78rem', fontWeight: '755', color: themeStyles.textMuted, marginRight: '6px' }}>Filter stack:</span>
+                            {['MySQL', 'MSSQL', 'PostgreSQL', 'MongoDB', 'Oracle'].map(tech => {
+                                const isSelected = selectedTechs.includes(tech);
+                                const colors = {
+                                    MySQL: { bg: 'rgba(0, 117, 143, 0.12)', activeBg: '#00758f', text: '#00758f', activeText: '#fff' },
+                                    MSSQL: { bg: 'rgba(230, 28, 32, 0.12)', activeBg: '#e61c20', text: '#e61c20', activeText: '#fff' },
+                                    PostgreSQL: { bg: 'rgba(49, 98, 137, 0.12)', activeBg: '#316289', text: '#316289', activeText: '#fff' },
+                                    MongoDB: { bg: 'rgba(79, 163, 76, 0.12)', activeBg: '#4fa34c', text: '#4fa34c', activeText: '#fff' },
+                                    Oracle: { bg: 'rgba(240, 30, 41, 0.12)', activeBg: '#f01e29', text: '#f01e29', activeText: '#fff' }
+                                };
+                                const c = colors[tech] || { bg: 'rgba(100, 116, 139, 0.12)', activeBg: '#64748b', text: '#64748b', activeText: '#fff' };
+                                return (
+                                    <button
+                                        key={tech}
+                                        onClick={() => {
+                                            if (isSelected) {
+                                                setSelectedTechs(selectedTechs.filter(t => t !== tech));
+                                            } else {
+                                                setSelectedTechs([...selectedTechs, tech]);
+                                            }
+                                        }}
+                                        style={{
+                                            padding: '6px 12px',
+                                            borderRadius: '20px',
+                                            border: '1px solid ' + (isSelected ? c.activeBg : 'rgba(255, 255, 255, 0.08)'),
+                                            background: isSelected ? c.activeBg : (isLight ? '#fff' : 'rgba(255,255,255,0.02)'),
+                                            color: isSelected ? c.activeText : themeStyles.textMain,
+                                            fontSize: '0.78rem',
+                                            fontWeight: '700',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.15s ease',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px',
+                                            boxShadow: isSelected ? `0 2px 8px ${c.activeBg}33` : 'none'
+                                        }}
+                                    >
+                                        <span style={{
+                                            width: '6px',
+                                            height: '6px',
+                                            borderRadius: '50%',
+                                            background: isSelected ? '#fff' : c.text
+                                        }} />
+                                        {tech}
+                                    </button>
+                                );
+                            })}
                         </div>
 
                         {/* Clients Grid */}

@@ -6,7 +6,6 @@ import { ThemeProvider } from './ThemeContext';
 // Dynamic dynamic loading / Code splitting optimization
 const Login = lazy(() => import('./Login'));
 const Dashboard = lazy(() => import('./Dashboard'));
-const AdminDashboard = lazy(() => import('./AdminDashboard'));
 const LeadDashboard = lazy(() => import('./LeadDashboard'));
 const LogStatusPage = lazy(() => import('./LogStatusPage'));
 const ObservabilityDashboard = lazy(() => import('./ObservabilityDashboard'));
@@ -30,7 +29,6 @@ const TelemetryClients = lazy(() => import('./new_features/TelemetryClients'));
 const TelemetryClientDetails = lazy(() => import('./new_features/TelemetryClientDetails'));
 const TelemetryClientDatabases = lazy(() => import('./new_features/TelemetryClientDatabases'));
 const TelemetryClientTables = lazy(() => import('./new_features/TelemetryClientTables'));
-const TelemetryClientMetrics = lazy(() => import('./new_features/TelemetryClientMetrics'));
 const TelemetryClientUptime = lazy(() => import('./new_features/TelemetryClientUptime'));
 const OverallSummaryHub = lazy(() => import('./new_features/OverallSummaryHub'));
 
@@ -145,14 +143,7 @@ const AppContent = () => {
                             </ProtectedRoute>
                         } 
                     />
-                    <Route 
-                        path="/overall-summary" 
-                        element={
-                            <ProtectedRoute>
-                                <OverallSummaryHub />
-                            </ProtectedRoute>
-                        } 
-                    />
+
                     <Route 
                         path="/servers" 
                         element={
@@ -193,14 +184,7 @@ const AppContent = () => {
                             </ProtectedRoute>
                         } 
                     />
-                    <Route 
-                        path="/telemetry-client-metrics/:clientName" 
-                        element={
-                            <ProtectedRoute>
-                                <TelemetryClientMetrics />
-                            </ProtectedRoute>
-                        } 
-                    />
+
                     <Route 
                         path="/telemetry-client-uptime/:clientName" 
                         element={
@@ -225,7 +209,7 @@ const AppContent = () => {
                         path="/admin" 
                         element={
                             <ProtectedRoute>
-                                <AdminDashboard />
+                                <AdminSetup />
                             </ProtectedRoute>
                         } 
                     />

@@ -49,7 +49,13 @@ def get_connection():
     
     # 1. Attempt to reuse connection pool from app.py to eliminate TCP overhead
     try:
-        from app import db_pool
+        import sys
+        db_pool = None
+        if 'backend.app' in sys.modules:
+            db_pool = getattr(sys.modules['backend.app'], 'db_pool', None)
+        if not db_pool and 'app' in sys.modules:
+            db_pool = getattr(sys.modules['app'], 'db_pool', None)
+            
         if db_pool is not None:
             conn = db_pool.getconn()
             return PooledConnectionProxy(conn, db_pool)
@@ -250,6 +256,71 @@ def run_migrations():
         cur.execute("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolved_by TEXT;")
         cur.execute("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP;")
 
+        # ======================================================================
+        # PRODUCTION-GRADE SCHEMA HARDENING: Unique Constraints & Indexes
+        # Idempotent — safe to run on both fresh and existing databases.
+        # ======================================================================
+
+        # 1. users table: enforce unique email (prevents duplicate OAuth / manual registrations)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes 
+                    WHERE tablename = 'users' AND indexname = 'uq_users_email'
+                ) THEN
+                    CREATE UNIQUE INDEX uq_users_email ON users (LOWER(email))
+                    WHERE email IS NOT NULL;
+                END IF;
+            END $$;
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users (LOWER(email));")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users (role);")
+
+        # 2. admin_clients table: prevent duplicate (client_name, db_type, server_name) tuples
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'admin_clients'::regclass AND conname = 'uq_admin_clients_combo'
+                ) THEN
+                    ALTER TABLE admin_clients
+                    ADD CONSTRAINT uq_admin_clients_combo
+                    UNIQUE (client_name, db_type, server_name);
+                END IF;
+            END $$;
+        """)
+
+        # 3. client_access table: prevent duplicate access grants per email+tech+client+server
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'client_access'::regclass AND conname = 'uq_client_access_combo'
+                ) THEN
+                    ALTER TABLE client_access
+                    ADD CONSTRAINT uq_client_access_combo
+                    UNIQUE (client_email, technology, client_name, server_name);
+                END IF;
+            END $$;
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_client_access_combo ON client_access (LOWER(client_email), LOWER(technology), client_name);")
+
+        # 4. notifications: index for fast per-user lookup
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_username ON notifications (LOWER(username), is_read, created_at DESC);")
+
+        # 5. ticket_comments: index for fast ticket thread fetching
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments (ticket_id, created_at ASC);")
+
+        # 6. leads table: index for fast email-based technology lookups
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_leads_email_lower ON leads (LOWER(email));")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_leads_status ON leads (status, LOWER(email));")
+
+        # 7. users: composite index for login queries
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_login ON users (username, LOWER(email));")
+
         # 6. Notifications Table if not exists
         cur.execute("""
             CREATE TABLE IF NOT EXISTS notifications (
@@ -315,9 +386,11 @@ def run_migrations():
                 company_name TEXT,
                 business_unit TEXT,
                 technology TEXT,
+                email TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        cur.execute("ALTER TABLE admin_agents ADD COLUMN IF NOT EXISTS email TEXT;")
         
         # 13. Ticket Comments/Logs Table if not exists
         cur.execute("""

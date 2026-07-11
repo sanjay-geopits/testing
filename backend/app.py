@@ -113,7 +113,8 @@ def check_client_alert_thresholds():
             # Fallback to server_utilization_history for servers
             cur.execute("""
                 SELECT DISTINCT server_name FROM admin_clients 
-                WHERE LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) AND LOWER(TRIM(db_type)) = LOWER(TRIM(%s));
+                WHERE LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) 
+                  AND LOWER(TRIM(%s)) = ANY(string_to_array(REPLACE(LOWER(db_type), ' ', ''), ','));
             """, (client, db_type))
             servers = [r["server_name"] for r in cur.fetchall() if r["server_name"]]
 
@@ -213,7 +214,8 @@ def check_client_alert_thresholds():
             # Resolve client-specific contact details
             cur.execute("""
                 SELECT client_email, phone_number FROM admin_clients 
-                WHERE LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) AND LOWER(TRIM(db_type)) = LOWER(TRIM(%s))
+                WHERE LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) 
+                  AND LOWER(TRIM(%s)) = ANY(string_to_array(REPLACE(LOWER(db_type), ' ', ''), ','))
                 LIMIT 1;
             """, (client, db_type))
             client_row = cur.fetchone()

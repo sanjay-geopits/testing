@@ -38,6 +38,7 @@ import {
     Shield,
     RefreshCw,
     ChevronRight,
+    ChevronDown,
     BarChart2,
     Server,
     X,
@@ -45,11 +46,12 @@ import {
     Trash2,
     Upload,
     UserCheck,
-    AlertOctagon
+    AlertOctagon,
+    Lock
 } from 'lucide-react';
 
 const Home = () => {
-    const { user, logout, logoUrl } = useAuth();
+    const { user, logout, logoUrl, refreshProfile } = useAuth();
     const navigate = useNavigate();
     const { theme, toggleTheme } = useTheme();
     const isLight = theme === 'light';
@@ -79,6 +81,99 @@ const Home = () => {
     const [feedbackSuccess, setFeedbackSuccess] = useState('');
     const [feedbackError, setFeedbackError] = useState('');
     const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+
+    // Change password modal states
+    const [showChangePwdModal, setShowChangePwdModal] = useState(false);
+    const [currentPassword, setCurrentPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [pwdError, setPwdError] = useState('');
+    const [pwdSuccess, setPwdSuccess] = useState('');
+    const [pwdLoading, setPwdLoading] = useState(false);
+
+    // Profile Dropdown & Picture States
+    const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+    const [profilePicLoading, setProfilePicLoading] = useState(false);
+    const [profilePicSuccess, setProfilePicSuccess] = useState('');
+    const [profilePicError, setProfilePicError] = useState('');
+    const [customAvatarUrl, setCustomAvatarUrl] = useState('');
+    const profileDropdownRef = useRef(null);
+
+    const AVATAR_PRESETS = [
+        { name: 'Admin Shield', url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&h=100&q=80' },
+        { name: 'Cyber Agent', url: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=100&h=100&q=80' },
+        { name: 'DBA Pro', url: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=100&h=100&q=80' },
+        { name: 'SysOps', url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=100&h=100&q=80' },
+        { name: 'NOC Lead', url: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=100&h=100&q=80' },
+        { name: 'Cloud Specialist', url: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?auto=format&fit=crop&w=100&h=100&q=80' },
+    ];
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target)) {
+                setShowProfileDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleSaveProfilePic = async (picUrl) => {
+        if (!picUrl) return;
+        setProfilePicLoading(true);
+        setProfilePicSuccess('');
+        setProfilePicError('');
+        try {
+            await api.post('/auth/profile-pic', { profile_pic: picUrl });
+            setProfilePicSuccess('Avatar updated successfully!');
+            if (refreshProfile) {
+                await refreshProfile();
+            }
+            setTimeout(() => setProfilePicSuccess(''), 3000);
+        } catch (err) {
+            setProfilePicError('Failed to update avatar.');
+        } finally {
+            setProfilePicLoading(false);
+        }
+    };
+
+    const handleChangePasswordSubmit = async (e) => {
+        e.preventDefault();
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            setPwdError("All fields are required.");
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            setPwdError("New passwords do not match.");
+            return;
+        }
+        if (newPassword.length < 6) {
+            setPwdError("New password must be at least 6 characters long.");
+            return;
+        }
+        
+        setPwdError('');
+        setPwdSuccess('');
+        setPwdLoading(true);
+        try {
+            await api.post('/auth/change-password', {
+                current_password: currentPassword,
+                new_password: newPassword
+            });
+            setPwdSuccess("Password updated successfully.");
+            setCurrentPassword('');
+            setNewPassword('');
+            setConfirmPassword('');
+            setTimeout(() => {
+                setShowChangePwdModal(false);
+                setPwdSuccess('');
+            }, 2000);
+        } catch (err) {
+            setPwdError(err.response?.data?.detail || "Failed to change password. Please check your current password.");
+        } finally {
+            setPwdLoading(false);
+        }
+    };
 
     const handleFeedbackSubmit = async (e) => {
         e.preventDefault();
@@ -275,16 +370,6 @@ const Home = () => {
 
     let menuItems = [
         {
-            title: "Overall Summary Hub",
-            subtitle: "SYSTEM TOPOLOGY & TELEMETRY",
-            description: "Real-time, AI-driven hourly telemetry, database uptime history, and log streams for registered clients.",
-            icon: <Activity style={{ color: '#ef4444' }} size={28} />,
-            path: "/overall-summary",
-            badge: "Operational Center",
-            colorClass: "red-glow",
-            metrics: "Realtime Analytics"
-        },
-        {
             title: "Real-time Log Intelligence",
             subtitle: "LOG MONITORING",
             description: "Advanced log query filters, live server severity mapping, database query logs anomaly engine, and instant AI automated diagnostic reports.",
@@ -336,26 +421,16 @@ const Home = () => {
         },
     ];
 
-    if (user?.role === 'admin' || user?.isAdmin) {
+    if (user?.role === 'admin' || user?.isAdmin || user?.role === 'lead') {
         menuItems.push({
-            title: "Administrative Control Center",
-            subtitle: "MANAGEMENT CONSOLE",
-            description: "Manage global ticket attributes, add support agents, register company clients, update dynamic logos, and configure core system settings.",
+            title: "Consolidated Admin Panel",
+            subtitle: "AUTHORIZED CONSOLE",
+            description: "Manage system user roles, allocate database access privileges, configure client-server mapping, track telemetry logs, and manage system alerts.",
             icon: <Sliders style={{ color: '#ea580c' }} size={28} />,
             path: "/admin",
-            badge: "Admin Sovereignty",
+            badge: "Unified Console",
             colorClass: "orange-glow",
-            metrics: "System Config Enabled"
-        });
-        menuItems.push({
-            title: "Admin Setup & Telemetry Console",
-            subtitle: "AUTHORIZED OPERATIONS",
-            description: "Register client database nodes, assign engineering permission matrices for database environments, and track user page visit logs.",
-            icon: <Layers style={{ color: '#0284c7' }} size={28} />,
-            path: "/admin/setup",
-            badge: "Telemetry Console",
-            colorClass: "blue-glow",
-            metrics: "Node Provisioning Enabled"
+            metrics: "System Control Active"
         });
     }
 
@@ -676,58 +751,226 @@ const Home = () => {
                         )}
                     </button>
 
-                    <div style={{ 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        gap: '12px',
-                        background: isLight ? '#ffffff' : 'rgba(255, 255, 255, 0.02)',
-                        border: themeStyles.inputBorder,
-                        padding: '6px 16px',
-                        borderRadius: '30px'
-                    }}>
-                        {user?.profilePic ? (
-                            <img src={user.profilePic} alt="" style={{ width: '28px', height: '28px', borderRadius: '50%', border: '2px solid #38bdf8' }} />
-                        ) : (
-                            <div style={{ 
-                                width: '28px', 
-                                height: '28px', 
-                                borderRadius: '50%', 
-                                background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)', 
-                                color: '#fff', 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                justifyContent: 'center',
-                                fontWeight: '700',
-                                fontSize: '0.75rem'
+                    <div style={{ position: 'relative' }} ref={profileDropdownRef}>
+                        <button
+                            onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px',
+                                background: isLight ? '#ffffff' : 'rgba(255, 255, 255, 0.02)',
+                                border: themeStyles.inputBorder,
+                                padding: '6px 16px',
+                                borderRadius: '30px',
+                                cursor: 'pointer',
+                                textAlign: 'left',
+                                outline: 'none',
+                                transition: 'all 0.2s'
+                            }}
+                        >
+                            {user?.profilePic ? (
+                                <img src={user.profilePic} alt="" style={{ width: '28px', height: '28px', borderRadius: '50%', border: '2px solid #38bdf8' }} />
+                            ) : (
+                                <div style={{ 
+                                    width: '28px', 
+                                    height: '28px', 
+                                    borderRadius: '50%', 
+                                    background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)', 
+                                    color: '#fff', 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'center',
+                                    fontWeight: '700',
+                                    fontSize: '0.75rem'
+                                }}>
+                                    {user?.username?.substring(0, 2).toUpperCase() || "OP"}
+                                </div>
+                            )}
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                <span style={{ fontSize: '0.8rem', fontWeight: '700', color: themeStyles.textMain }}>{user?.username || "Operator"}</span>
+                                <span style={{ fontSize: '0.62rem', color: '#10b981', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    {user?.role || "Specialist"}
+                                </span>
+                            </div>
+                            <ChevronDown size={14} style={{ color: themeStyles.textMuted, transform: showProfileDropdown ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                        </button>
+
+                        {showProfileDropdown && (
+                            <div style={{
+                                position: 'absolute',
+                                top: 'calc(100% + 8px)',
+                                right: 0,
+                                width: '320px',
+                                background: themeStyles.cardBg,
+                                border: themeStyles.cardBorder,
+                                borderRadius: '16px',
+                                boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                                padding: '1.25rem',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '1rem',
+                                zIndex: 100,
+                                backdropFilter: 'blur(10px)'
                             }}>
-                                {user?.username?.substring(0, 2).toUpperCase() || "OP"}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px' }}>
+                                    {user?.profilePic ? (
+                                        <img src={user.profilePic} alt="" style={{ width: '48px', height: '48px', borderRadius: '50%', border: '2px solid #38bdf8' }} />
+                                    ) : (
+                                        <div style={{
+                                            width: '48px',
+                                            height: '48px',
+                                            borderRadius: '50%',
+                                            background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)',
+                                            color: '#fff',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            fontWeight: '700',
+                                            fontSize: '1.2rem'
+                                        }}>
+                                            {user?.username?.substring(0, 2).toUpperCase() || "OP"}
+                                        </div>
+                                    )}
+                                    <div>
+                                        <h4 style={{ margin: 0, fontSize: '0.9rem', fontWeight: '800', color: themeStyles.textMain }}>{user?.fullName || user?.username}</h4>
+                                        <p style={{ margin: 0, fontSize: '0.72rem', color: themeStyles.textMuted }}>{user?.email || 'No email configured'}</p>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <span style={{ display: 'block', fontSize: '0.68rem', fontWeight: '800', color: themeStyles.textMuted, textTransform: 'uppercase', marginBottom: '8px' }}>Select Avatar Preset</span>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '8px' }}>
+                                        {AVATAR_PRESETS.map((av, avIdx) => (
+                                            <button
+                                                key={avIdx}
+                                                onClick={() => handleSaveProfilePic(av.url)}
+                                                title={av.name}
+                                                style={{
+                                                    border: user?.profilePic === av.url ? '2px solid #38bdf8' : '2px solid transparent',
+                                                    borderRadius: '50%',
+                                                    padding: 0,
+                                                    cursor: 'pointer',
+                                                    background: 'none',
+                                                    transition: 'all 0.2s',
+                                                    overflow: 'hidden',
+                                                    width: '32px',
+                                                    height: '32px'
+                                                }}
+                                            >
+                                                <img src={av.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                            </button>
+                                        ))}
+                                    </div>
+                                    
+                                    <div style={{ marginTop: '12px', display: 'flex', gap: '6px' }}>
+                                        <input
+                                            type="text"
+                                            placeholder="Custom Image URL..."
+                                            value={customAvatarUrl}
+                                            onChange={(e) => setCustomAvatarUrl(e.target.value)}
+                                            style={{
+                                                flex: 1,
+                                                padding: '6px 10px',
+                                                borderRadius: '8px',
+                                                background: themeStyles.inputBg,
+                                                border: themeStyles.inputBorder,
+                                                color: themeStyles.textMain,
+                                                fontSize: '0.75rem',
+                                                outline: 'none'
+                                            }}
+                                        />
+                                        <button
+                                            onClick={() => {
+                                                if (customAvatarUrl.trim()) {
+                                                    handleSaveProfilePic(customAvatarUrl.trim());
+                                                    setCustomAvatarUrl('');
+                                                }
+                                            }}
+                                            style={{
+                                                padding: '6px 12px',
+                                                background: themeStyles.accentColor,
+                                                color: isLight ? '#fff' : '#000',
+                                                border: 'none',
+                                                borderRadius: '8px',
+                                                fontSize: '0.75rem',
+                                                fontWeight: '700',
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            Set
+                                        </button>
+                                    </div>
+
+                                    {profilePicSuccess && (
+                                        <p style={{ margin: '8px 0 0 0', fontSize: '0.7rem', color: '#10b981', fontWeight: '700' }}>{profilePicSuccess}</p>
+                                    )}
+                                    {profilePicError && (
+                                        <p style={{ margin: '8px 0 0 0', fontSize: '0.7rem', color: '#ef4444', fontWeight: '700' }}>{profilePicError}</p>
+                                    )}
+                                </div>
+
+                                <div style={{ height: '1px', background: 'rgba(255,255,255,0.06)' }}></div>
+
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    <button
+                                        onClick={() => {
+                                            setShowProfileDropdown(false);
+                                            setPwdError('');
+                                            setPwdSuccess('');
+                                            setCurrentPassword('');
+                                            setNewPassword('');
+                                            setConfirmPassword('');
+                                            setShowChangePwdModal(true);
+                                        }}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            color: '#38bdf8',
+                                            padding: '10px 8px',
+                                            textAlign: 'left',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            fontSize: '0.82rem',
+                                            fontWeight: '700',
+                                            transition: 'background 0.2s'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
+                                        onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                                    >
+                                        <Lock size={14} />
+                                        <span>Change Password</span>
+                                    </button>
+
+                                    <button
+                                        onClick={logout}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            color: '#ef4444',
+                                            padding: '10px 8px',
+                                            textAlign: 'left',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            fontSize: '0.82rem',
+                                            fontWeight: '700',
+                                            transition: 'background 0.2s'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(239,68,68,0.06)'}
+                                        onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                                    >
+                                        <LogOut size={14} />
+                                        <span>Sign Out</span>
+                                    </button>
+                                </div>
                             </div>
                         )}
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                            <span style={{ fontSize: '0.8rem', fontWeight: '700', color: themeStyles.textMain }}>{user?.username || "Operator"}</span>
-                            <span style={{ fontSize: '0.62rem', color: '#10b981', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                {user?.role || "Specialist"}
-                            </span>
-                        </div>
                     </div>
-
-                    <button 
-                        onClick={logout}
-                        style={{ 
-                            background: 'none', 
-                            border: 'none', 
-                            color: '#ef4444', 
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            fontWeight: '700',
-                            fontSize: '0.85rem'
-                        }}
-                    >
-                        <LogOut size={16} />
-                        <span>Sign Out</span>
-                    </button>
                 </div>
             </header>
 
@@ -1404,6 +1647,200 @@ const Home = () => {
                                 >
                                     <MessageSquare size={16} />
                                     <span>Submit Feedback</span>
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* ── CHANGE PASSWORD MODAL ── */}
+            {showChangePwdModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.6)',
+                    backdropFilter: 'blur(8px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 9999,
+                    padding: '1.5rem'
+                }}>
+                    <div style={{
+                        background: themeStyles.cardBg,
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: '24px',
+                        padding: '2.5rem',
+                        width: '100%',
+                        maxWidth: '440px',
+                        boxShadow: '0 20px 50px rgba(0, 0, 0, 0.4)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '1.5rem'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{
+                                    background: 'rgba(59, 130, 246, 0.1)',
+                                    color: '#3b82f6',
+                                    padding: '10px',
+                                    borderRadius: '12px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                }}>
+                                    <Lock size={20} />
+                                </div>
+                                <div>
+                                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '800', color: themeStyles.textMain }}>Update Password</h3>
+                                    <p style={{ margin: 0, fontSize: '0.75rem', color: themeStyles.textMuted }}>Secure your GeoMon credentials</p>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => setShowChangePwdModal(false)}
+                                style={{ background: 'none', border: 'none', color: themeStyles.textMuted, cursor: 'pointer' }}
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {pwdError && (
+                            <div style={{
+                                background: 'rgba(239, 68, 68, 0.08)',
+                                border: '1px solid rgba(239, 68, 68, 0.2)',
+                                color: '#ef4444',
+                                padding: '12px',
+                                borderRadius: '12px',
+                                fontSize: '0.8rem',
+                                fontWeight: '500'
+                            }}>
+                                {pwdError}
+                            </div>
+                        )}
+
+                        {pwdSuccess && (
+                            <div style={{
+                                background: 'rgba(16, 185, 129, 0.08)',
+                                border: '1px solid rgba(16, 185, 129, 0.2)',
+                                color: '#10b981',
+                                padding: '12px',
+                                borderRadius: '12px',
+                                fontSize: '0.8rem',
+                                fontWeight: '500'
+                            }}>
+                                {pwdSuccess}
+                            </div>
+                        )}
+
+                        <form onSubmit={handleChangePasswordSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <label style={{ fontSize: '0.75rem', fontWeight: '700', color: themeStyles.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    Current Password
+                                </label>
+                                <input 
+                                    type="password"
+                                    value={currentPassword}
+                                    onChange={(e) => setCurrentPassword(e.target.value)}
+                                    placeholder="Enter current temporary or user password"
+                                    style={{
+                                        padding: '12px 14px',
+                                        borderRadius: '12px',
+                                        background: isLight ? '#ffffff' : 'rgba(255,255,255,0.02)',
+                                        border: themeStyles.inputBorder,
+                                        color: themeStyles.textMain,
+                                        fontSize: '0.88rem',
+                                        outline: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <label style={{ fontSize: '0.75rem', fontWeight: '700', color: themeStyles.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    New Password
+                                </label>
+                                <input 
+                                    type="password"
+                                    value={newPassword}
+                                    onChange={(e) => setNewPassword(e.target.value)}
+                                    placeholder="Minimum 6 characters"
+                                    style={{
+                                        padding: '12px 14px',
+                                        borderRadius: '12px',
+                                        background: isLight ? '#ffffff' : 'rgba(255,255,255,0.02)',
+                                        border: themeStyles.inputBorder,
+                                        color: themeStyles.textMain,
+                                        fontSize: '0.88rem',
+                                        outline: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                <label style={{ fontSize: '0.75rem', fontWeight: '700', color: themeStyles.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    Confirm New Password
+                                </label>
+                                <input 
+                                    type="password"
+                                    value={confirmPassword}
+                                    onChange={(e) => setConfirmPassword(e.target.value)}
+                                    placeholder="Re-type new password"
+                                    style={{
+                                        padding: '12px 14px',
+                                        borderRadius: '12px',
+                                        background: isLight ? '#ffffff' : 'rgba(255,255,255,0.02)',
+                                        border: themeStyles.inputBorder,
+                                        color: themeStyles.textMain,
+                                        fontSize: '0.88rem',
+                                        outline: 'none'
+                                    }}
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '12px', marginTop: '0.5rem' }}>
+                                <button 
+                                    type="button"
+                                    onClick={() => setShowChangePwdModal(false)}
+                                    style={{
+                                        flex: 1,
+                                        padding: '12px',
+                                        borderRadius: '12px',
+                                        background: isLight ? '#f1f5f9' : 'rgba(255,255,255,0.03)',
+                                        border: themeStyles.inputBorder,
+                                        color: themeStyles.textMain,
+                                        fontWeight: '600',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Cancel
+                                </button>
+                                <button 
+                                    type="submit"
+                                    disabled={pwdLoading}
+                                    style={{
+                                        flex: 1,
+                                        padding: '12px',
+                                        borderRadius: '12px',
+                                        background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                                        border: 'none',
+                                        color: '#ffffff',
+                                        fontWeight: '600',
+                                        cursor: pwdLoading ? 'not-allowed' : 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '8px'
+                                    }}
+                                >
+                                    {pwdLoading ? "Saving..." : (
+                                        <>
+                                            <Lock size={16} />
+                                            <span>Save Password</span>
+                                        </>
+                                    )}
                                 </button>
                             </div>
                         </form>

@@ -20,6 +20,8 @@ import {
     Briefcase,
     Activity,
     Shield,
+    ShieldCheck,
+    ShieldAlert,
     Upload,
     RefreshCw,
     Terminal,
@@ -31,8 +33,13 @@ import {
     Bell,
     Save,
     Mail,
-    List
+    List,
+    ChevronDown,
+    Clock
 } from 'lucide-react';
+
+
+const AVAILABLE_TECHS = ['MSSQL', 'MySQL', 'PostgreSQL', 'MongoDB', 'Oracle'];
 
 const AdminSetup = () => {
     const navigate = useNavigate();
@@ -41,7 +48,7 @@ const AdminSetup = () => {
     const isLight = theme === 'light';
 
     // Sidebar Active Tab Navigation state (defaults to 'ticket-options' matching user screenshot)
-    const [activeTab, setActiveTab] = useState('ticket-options'); 
+    const [activeTab, setActiveTab] = useState('user-roles'); 
 
     // Status alerts
     const formatDuration = (seconds) => {
@@ -64,17 +71,6 @@ const AdminSetup = () => {
     // ==========================================
     // 1. TICKET OPTIONS STATE VARIABLES
     // ==========================================
-    // Support Agents (Admin Agents)
-    const [agentsList, setAgentsList] = useState([]);
-    const [adminAgentName, setAdminAgentName] = useState('');
-    const [adminAgentCompany, setAdminAgentCompany] = useState('');
-    const [adminAgentBU, setAdminAgentBU] = useState('');
-    const [adminAgentTech, setAdminAgentTech] = useState('');
-
-    // Ticket Dropdown Helper Agents
-    const [ticketAgentsList, setTicketAgentsList] = useState([]);
-    const [newTicketAgentName, setNewTicketAgentName] = useState('');
-
     // Business Units
     const [buList, setBuList] = useState([]);
     const [newBuName, setNewBuName] = useState('');
@@ -83,10 +79,10 @@ const AdminSetup = () => {
     const [clientsList, setClientsList] = useState([]);
     const [newClientName, setNewClientName] = useState('');
     const [newClientTech, setNewClientTech] = useState('MSSQL');
+    const [selectedTechs, setSelectedTechs] = useState(['MSSQL']);
     const [newClientIp, setNewClientIp] = useState('');
     const [newClientEmail, setNewClientEmail] = useState('');
     const [newClientPhone, setNewClientPhone] = useState('');
-    const [contactClientName, setContactClientName] = useState('');
     const [editingClient, setEditingClient] = useState(null);
 
     // ==========================================
@@ -109,22 +105,29 @@ const AdminSetup = () => {
 
     const [permissionsList, setPermissionsList] = useState([]);
     const [permEmail, setPermEmail] = useState('');
-    const [permTech, setPermTech] = useState('MySQL');
+    const [selectedPermTechs, setSelectedPermTechs] = useState(['MySQL']);
+    const [permClientScope, setPermClientScope] = useState('');
     const [permStatus, setPermStatus] = useState('Active');
     const [permIsLead, setPermIsLead] = useState(false);
     const [permRole, setPermRole] = useState('user');
     const [permissionsSearch, setPermissionsSearch] = useState('');
+    const [showTechDropdown, setShowTechDropdown] = useState(false);
     
     // User Clients Permission Mapping
     const [userClientsList, setUserClientsList] = useState([]);
-    const [ucEmail, setUcEmail] = useState('');
-    const [ucClientName, setUcClientName] = useState('');
-    const [ucAccessLevel, setUcAccessLevel] = useState('view');
 
-    // Online Status Directory
-    const [onlineUsersList, setOnlineUsersList] = useState([]);
-    const [newOnlineUsername, setNewOnlineUsername] = useState('');
-    const [newOnlineUnits, setNewOnlineUnits] = useState('');
+    // Mapped Client Access Mappings (legacy clients tab)
+    const [clientAccessList, setClientAccessList] = useState([]);
+    const [clientAccessLoading, setClientAccessLoading] = useState(false);
+    const [clientFilters, setClientFilters] = useState({ db_types: [], clients: [], client_server_map: {}, db_server_map: {}, db_client_map: {} });
+    const [mapClientEmail, setMapClientEmail] = useState('');
+    const [mapClientTech, setMapClientTech] = useState('');
+    const [mapClientName, setMapClientName] = useState('');
+    const [mapClientServer, setMapClientServer] = useState('');
+
+    // Lead activity / User oversight (legacy activity tab)
+    const [leadActivityList, setLeadActivityList] = useState([]);
+    const [leadActivityLoading, setLeadActivityLoading] = useState(false);
 
     // ==========================================
     // 4. NETWORK & FIREWALL STATE VARIABLES
@@ -235,18 +238,6 @@ const AdminSetup = () => {
     // ==========================================
     // DATA FETCHING HOOKS
     // ==========================================
-    const fetchAgents = () => {
-        api.get('/new-features/admin/agents')
-            .then(res => setAgentsList(res.data.agents || []))
-            .catch(err => console.error("Error fetching admin agents:", err));
-    };
-
-    const fetchTicketAgents = () => {
-        api.get('/new-features/admin/ticket-agents')
-            .then(res => setTicketAgentsList(res.data.agents || []))
-            .catch(err => console.error("Error fetching ticket agents:", err));
-    };
-
     const fetchBusinessUnits = () => {
         api.get('/new-features/admin/business-units')
             .then(res => setBuList(res.data.business_units || []))
@@ -280,12 +271,6 @@ const AdminSetup = () => {
         api.get('/new-features/admin/user-clients')
             .then(res => setUserClientsList(res.data.permissions || []))
             .catch(err => console.error("Error fetching user client permissions:", err));
-    };
-
-    const fetchOnlineUsers = () => {
-        api.get('/new-features/admin/online-users')
-            .then(res => setOnlineUsersList(res.data.online_users || []))
-            .catch(err => console.error("Error fetching online users:", err));
     };
 
     const fetchTelemetry = () => {
@@ -338,27 +323,49 @@ const AdminSetup = () => {
             .catch(err => console.error("Error fetching technology alerts config:", err));
     };
 
+    const fetchClientAccessList = () => {
+        setClientAccessLoading(true);
+        api.get('/admin/clients')
+            .then(res => setClientAccessList(res.data.clients || []))
+            .catch(err => console.error("Error fetching client access assignments:", err))
+            .finally(() => setClientAccessLoading(false));
+    };
+
+    const fetchClientFilters = () => {
+        api.get('/filters')
+            .then(res => setClientFilters(res.data || { db_types: [], clients: [], client_server_map: {}, db_server_map: {}, db_client_map: {} }))
+            .catch(err => console.error("Error fetching client filters:", err));
+    };
+
+    const fetchLeadActivity = () => {
+        setLeadActivityLoading(true);
+        api.get('/admin/lead-activity')
+            .then(res => setLeadActivityList(res.data.activity || []))
+            .catch(err => console.error("Error fetching lead activity:", err))
+            .finally(() => setLeadActivityLoading(false));
+    };
+
     useEffect(() => {
-        if (user && user.role !== 'admin') {
+        if (user && user.role !== 'admin' && user.role !== 'lead') {
             navigate('/');
             return;
         }
 
-        fetchAgents();
-        fetchTicketAgents();
         fetchBusinessUnits();
         fetchAdminClients();
         fetchLogoSettings();
         fetchSchedulerStatus();
         fetchPermissionsList();
         fetchUserClients();
-        fetchOnlineUsers();
         fetchTelemetry();
         fetchFeedbacks();
         fetchLoginUsers();
         fetchShareHistory();
         fetchAlertSettings();
         fetchTechAlertConfigs();
+        fetchClientAccessList();
+        fetchClientFilters();
+        fetchLeadActivity();
 
         const interval = setInterval(fetchTelemetry, 25000);
         return () => clearInterval(interval);
@@ -492,93 +499,6 @@ const AdminSetup = () => {
         setEditingTech(config.technology);
     };
 
-    // 1. Ticket Agents dropdown actions
-    const handleAddTicketAgent = async (e) => {
-        e.preventDefault();
-        if (!newTicketAgentName.trim()) return;
-        setError('');
-        setSuccess('');
-        setIsLoading(true);
-
-        try {
-            await api.post('/new-features/admin/ticket-agents', { name: newTicketAgentName });
-            setSuccess(`Ticket Agent "${newTicketAgentName}" added successfully.`);
-            setNewTicketAgentName('');
-            fetchTicketAgents();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            setError(err.response?.data?.detail || 'Failed to add ticket agent.');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleDeleteTicketAgent = async (agentId) => {
-        setError('');
-        setSuccess('');
-        setIsLoading(true);
-
-        try {
-            await api.delete(`/new-features/admin/ticket-agents/${agentId}`);
-            setSuccess("Ticket Agent deallocated successfully.");
-            fetchTicketAgents();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            setError(err.response?.data?.detail || 'Failed to delete ticket agent.');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    // 1b. Support Specialists (Admin Agents) Actions
-    const handleAddAdminAgent = async (e) => {
-        e.preventDefault();
-        if (!adminAgentName.trim() || !adminAgentCompany.trim() || !adminAgentBU.trim() || !adminAgentTech.trim()) {
-            setError('All support specialist fields (name, company, business unit, technology) are required.');
-            return;
-        }
-        setError('');
-        setSuccess('');
-        setIsLoading(true);
-
-        try {
-            await api.post('/new-features/admin/agents', {
-                agent_name: adminAgentName,
-                company_name: adminAgentCompany,
-                business_unit: adminAgentBU,
-                technology: adminAgentTech
-            });
-            setSuccess(`Support Specialist "${adminAgentName}" registered successfully.`);
-            setAdminAgentName('');
-            setAdminAgentCompany('');
-            setAdminAgentBU('');
-            setAdminAgentTech('');
-            fetchAgents();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            setError(err.response?.data?.detail || 'Failed to register support specialist.');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleDeleteAdminAgent = async (agentId) => {
-        setError('');
-        setSuccess('');
-        setIsLoading(true);
-
-        try {
-            await api.delete(`/new-features/admin/agents/${agentId}`);
-            setSuccess("Support Specialist entry revoked.");
-            fetchAgents();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            setError(err.response?.data?.detail || 'Failed to delete support specialist.');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
     // 2. Business Units Action
     const handleAddBu = async (e) => {
         e.preventDefault();
@@ -629,24 +549,28 @@ const AdminSetup = () => {
             if (editingClient) {
                 await api.put(`/new-features/admin/clients/${editingClient.id}`, {
                     client_name: newClientName,
-                    db_type: newClientTech,
+                    db_type: selectedTechs.join(', '),
                     server_name: newClientIp || '127.0.0.1',
-                    client_email: editingClient.client_email || '',
-                    phone_number: editingClient.phone_number || ''
+                    client_email: newClientEmail,
+                    phone_number: newClientPhone
                 });
                 setSuccess(`Company client "${newClientName}" updated successfully.`);
                 setEditingClient(null);
             } else {
                 await api.post('/new-features/admin/clients', {
                     client_name: newClientName,
-                    db_type: newClientTech,
-                    server_name: newClientIp || '127.0.0.1'
+                    db_type: selectedTechs.join(', '),
+                    server_name: newClientIp || '127.0.0.1',
+                    client_email: newClientEmail,
+                    phone_number: newClientPhone
                 });
                 setSuccess(`Company client "${newClientName}" registered successfully.`);
             }
             setNewClientName('');
             setNewClientIp('');
-            setNewClientTech('MSSQL');
+            setNewClientEmail('');
+            setNewClientPhone('');
+            setSelectedTechs(['MSSQL']);
             fetchAdminClients();
             setTimeout(() => setSuccess(''), 4000);
         } catch (err) {
@@ -659,8 +583,11 @@ const AdminSetup = () => {
     const handleEditClientClick = (client) => {
         setEditingClient(client);
         setNewClientName(client.client_name);
-        setNewClientTech(client.db_type);
+        const techs = client.db_type ? client.db_type.split(',').map(t => t.trim()) : ['MSSQL'];
+        setSelectedTechs(techs);
         setNewClientIp(client.server_name || '');
+        setNewClientEmail(client.client_email || '');
+        setNewClientPhone(client.phone_number || '');
         setError('');
         setSuccess('');
     };
@@ -668,8 +595,10 @@ const AdminSetup = () => {
     const handleCancelEditClient = () => {
         setEditingClient(null);
         setNewClientName('');
-        setNewClientTech('MSSQL');
+        setSelectedTechs(['MSSQL']);
         setNewClientIp('');
+        setNewClientEmail('');
+        setNewClientPhone('');
         setError('');
         setSuccess('');
     };
@@ -686,71 +615,6 @@ const AdminSetup = () => {
             setTimeout(() => setSuccess(''), 4000);
         } catch (err) {
             setError(err.response?.data?.detail || 'Failed to delete company client.');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleSaveClientContacts = async (e) => {
-        e.preventDefault();
-        if (!contactClientName) {
-            setError('Please select a client to configure contacts.');
-            return;
-        }
-        const matchedClient = clientsList.find(c => c.client_name === contactClientName);
-        if (!matchedClient) {
-            setError('Selected client not found.');
-            return;
-        }
-        setError('');
-        setSuccess('');
-        setIsLoading(true);
-
-        try {
-            await api.put(`/new-features/admin/clients/${matchedClient.id}`, {
-                client_name: matchedClient.client_name,
-                db_type: matchedClient.db_type,
-                server_name: matchedClient.server_name || '127.0.0.1',
-                client_email: newClientEmail,
-                phone_number: newClientPhone
-            });
-            setSuccess(`Contacts updated for client "${contactClientName}".`);
-            setNewClientEmail('');
-            setNewClientPhone('');
-            setContactClientName('');
-            fetchAdminClients();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            setError(err.response?.data?.detail || 'Failed to update client contacts.');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleEditClientContactClick = (client) => {
-        setContactClientName(client.client_name);
-        setNewClientEmail(client.client_email || '');
-        setNewClientPhone(client.phone_number || '');
-        setError('');
-        setSuccess('');
-    };
-
-    const handleDeleteClientContact = async (client) => {
-        if (!window.confirm(`Are you sure you want to clear contact details for client "${client.client_name}"?`)) return;
-        try {
-            setIsLoading(true);
-            await api.put(`/new-features/admin/clients/${client.id}`, {
-                client_name: client.client_name,
-                db_type: client.db_type,
-                server_name: client.server_name || '127.0.0.1',
-                client_email: '',
-                phone_number: ''
-            });
-            setSuccess(`Contact details cleared for client "${client.client_name}".`);
-            fetchAdminClients();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            setError(err.response?.data?.detail || 'Failed to clear client contacts.');
         } finally {
             setIsLoading(false);
         }
@@ -814,55 +678,21 @@ const AdminSetup = () => {
         }
     };
 
-    // 4.5 User Clients Permission Actions
-    const handleAssignUserClient = async (e) => {
-        e.preventDefault();
-        if (!ucEmail.trim() || !ucClientName) return;
-        setIsLoading(true);
-        setError('');
-        setSuccess('');
-        try {
-            await api.post('/new-features/admin/user-clients', {
-                email: ucEmail.trim(),
-                client_name: ucClientName,
-                access_level: ucAccessLevel
-            });
-            setSuccess('User client permission successfully mapped!');
-            setUcEmail('');
-            setUcClientName('');
-            fetchUserClients();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            console.error("Error assigning client permission:", err);
-            setError(err.response?.data?.detail || "Failed to assign user client permission.");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleDeleteUserClient = async (permId) => {
-        if (!window.confirm("Are you sure you want to revoke this user's client permission?")) return;
-        setIsLoading(true);
-        setError('');
-        setSuccess('');
-        try {
-            await api.delete(`/new-features/admin/user-clients/${permId}`);
-            setSuccess('User client permission successfully revoked!');
-            fetchUserClients();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            console.error("Error revoking client permission:", err);
-            setError(err.response?.data?.detail || "Failed to revoke client permission.");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
     const handleAddLoginUser = async (e) => {
         e.preventDefault();
         if (!newLoginUsername.trim() || !newLoginEmail.trim() || !newLoginFullName.trim() || !newLoginPassword.trim()) {
             setError("All fields are required to create a login account.");
             return;
+        }
+        if (user?.role === 'lead') {
+            const leadEmail = user?.email || '';
+            const leadDomain = leadEmail.includes('@') ? leadEmail.split('@').pop().toLowerCase() : '';
+            const inputEmail = newLoginEmail.trim();
+            const inputDomain = inputEmail.includes('@') ? inputEmail.split('@').pop().toLowerCase() : '';
+            if (!leadDomain || leadDomain !== inputDomain) {
+                setError(`Lead users can only add users within their own domain (@${leadDomain}).`);
+                return;
+            }
         }
         setError('');
         setSuccess('');
@@ -908,6 +738,113 @@ const AdminSetup = () => {
             setIsLoading(false);
         }
     };
+
+    // 4. Client Access Mapping & User Oversight actions
+    const handleAddClientAccess = async (e) => {
+        e.preventDefault();
+        setError('');
+        setSuccess('');
+        setIsLoading(true);
+        try {
+            await api.post('/admin/clients', {
+                client_email: mapClientEmail.trim(),
+                technology: mapClientTech,
+                client_name: mapClientName,
+                server_name: mapClientServer
+            });
+            setSuccess("Client access mapping registered successfully.");
+            setMapClientEmail('');
+            setMapClientTech('');
+            setMapClientName('');
+            setMapClientServer('');
+            fetchClientAccessList();
+            setTimeout(() => setSuccess(''), 4000);
+        } catch (err) {
+            setError(err.response?.data?.detail || "Failed to register client access mapping.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleToggleClientAccessStatus = async (client) => {
+        setError('');
+        setSuccess('');
+        setIsLoading(true);
+        try {
+            await api.patch(`/admin/clients/${client.id}/status`);
+            setSuccess("Client access status updated successfully.");
+            fetchClientAccessList();
+            setTimeout(() => setSuccess(''), 4000);
+        } catch (err) {
+            setError(err.response?.data?.detail || "Failed to update client access status.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleDeleteClientAccess = async (client) => {
+        if (!window.confirm(`Are you sure you want to delete the mapping for ${client.client_email}?`)) return;
+        setError('');
+        setSuccess('');
+        setIsLoading(true);
+        try {
+            await api.delete(`/admin/clients/${client.id}`);
+            setSuccess("Client access mapping deleted successfully.");
+            fetchClientAccessList();
+            setTimeout(() => setSuccess(''), 4000);
+        } catch (err) {
+            setError(err.response?.data?.detail || "Failed to delete client access mapping.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleToggleAdmin = async (username, currentRole) => {
+        const newRole = currentRole === 'admin' ? 'user' : 'admin';
+        const action = newRole === 'admin' ? 'Grant Admin Access' : 'Revoke Admin Access';
+        
+        if (!window.confirm(`Are you sure you want to ${action} for user ${username}?`)) return;
+        setError('');
+        setSuccess('');
+        setIsLoading(true);
+
+        try {
+            await api.patch('/admin/users/role', { 
+                username: username,
+                role: newRole 
+            });
+            setSuccess(`User role successfully updated to ${newRole}.`);
+            fetchLoginUsers();
+            setTimeout(() => setSuccess(''), 4000);
+        } catch (err) {
+            setError(err.response?.data?.detail || "Role update failed.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const isUserActive = (lastActive) => {
+        if (!lastActive || lastActive === 'Never') return false;
+        try {
+            const activeTime = new Date(lastActive.replace(' ', 'T'));
+            const diffMs = new Date() - activeTime;
+            const diffMins = diffMs / 1000 / 60;
+            return diffMins < 5;
+        } catch (e) {
+            return false;
+        }
+    };
+
+    const mappedClientOptions = React.useMemo(() => {
+        if (!mapClientTech) return clientFilters.clients || [];
+        return clientFilters.db_client_map?.[mapClientTech] || [];
+    }, [mapClientTech, clientFilters]);
+
+    const mappedServerOptions = React.useMemo(() => {
+        if (mapClientName) return clientFilters.client_server_map?.[mapClientName] || [];
+        if (mapClientTech) return clientFilters.db_server_map?.[mapClientTech] || [];
+        return [...new Set(Object.values(clientFilters.client_server_map || {}).flat())];
+    }, [mapClientName, mapClientTech, clientFilters]);
 
     // 5. Whitelist CIDR Registry Actions
     const handleRegisterCidr = (e) => {
@@ -1028,25 +965,42 @@ const AdminSetup = () => {
     // 9. User Privilege Allocator Actions
     const handleAssignPermission = async (e) => {
         e.preventDefault();
-        if (!permEmail.trim()) return;
+        if (!permEmail.trim()) {
+            setError("Email address is required");
+            return;
+        }
         setError('');
         setSuccess('');
         setIsLoading(true);
 
         try {
+            // 1. Assign privilege technologies
             await api.post('/admin/leads', {
-                email: permEmail,
-                technology: permTech,
-                status: permStatus,
-                is_lead: permIsLead,
-                role: permRole
+                email: permEmail.trim(),
+                technologies: selectedPermTechs,
+                is_lead: permRole === 'lead'
             });
-            setSuccess(`Technology scope allocated to ${permEmail}.`);
+
+            // 2. Assign client environment view permission if selected
+            if (permClientScope) {
+                await api.post('/new-features/admin/user-clients', {
+                    email: permEmail.trim(),
+                    client_name: permClientScope,
+                    access_level: permRole === 'admin' ? 'write' : 'view'
+                });
+            }
+
+            setSuccess(`User registry & privilege scope allocated for ${permEmail}.`);
             setPermEmail('');
+            setPermClientScope('');
+            setSelectedPermTechs(['MySQL']);
+            setPermRole('user');
+            
             fetchPermissionsList();
+            fetchUserClients();
             setTimeout(() => setSuccess(''), 4000);
         } catch (err) {
-            setError('Failed to allocate engineering scope permissions.');
+            setError(err.response?.data?.detail || 'Failed to allocate engineering scope permissions.');
         } finally {
             setIsLoading(false);
         }
@@ -1079,48 +1033,6 @@ const AdminSetup = () => {
             setTimeout(() => setSuccess(''), 4000);
         } catch (err) {
             setError('Failed to purge permission scope.');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    // 10. Active Duty Online Specialist Actions
-    const handleCreateOnlineUser = async (e) => {
-        e.preventDefault();
-        if (!newOnlineUsername.trim()) return;
-        setError('');
-        setSuccess('');
-        setIsLoading(true);
-
-        try {
-            await api.post('/new-features/admin/online-users', {
-                username: newOnlineUsername,
-                units: newOnlineUnits || 'DBA Specialist'
-            });
-            setSuccess(`Specialist "${newOnlineUsername}" registered active.`);
-            setNewOnlineUsername('');
-            setNewOnlineUnits('');
-            fetchOnlineUsers();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            setError("Failed to register active specialist.");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const handleDeleteOnlineUser = async (userId) => {
-        setError('');
-        setSuccess('');
-        setIsLoading(true);
-
-        try {
-            await api.delete(`/new-features/admin/online-users/${userId}`);
-            setSuccess("Specialist marked offline.");
-            fetchOnlineUsers();
-            setTimeout(() => setSuccess(''), 4000);
-        } catch (err) {
-            setError("Failed to set offline status.");
         } finally {
             setIsLoading(false);
         }
@@ -1170,6 +1082,21 @@ const AdminSetup = () => {
         p.technology?.toLowerCase().includes(permissionsSearch.toLowerCase())
     );
 
+    const derivedTicketAgents = permissionsList
+        .filter(p => p.status === 'Active')
+        .reduce((acc, p) => {
+            // Deduplicate by email
+            if (!acc.some(agent => agent.email.toLowerCase() === p.email.toLowerCase())) {
+                const loginUser = loginUsersList.find(u => u.email?.toLowerCase() === p.email?.toLowerCase());
+                acc.push({
+                    id: p.id,
+                    name: loginUser ? loginUser.username : p.email.split('@')[0],
+                    email: p.email
+                });
+            }
+            return acc;
+        }, []);
+
     const filteredTelemetry = telemetry.filter(t =>
         t.username?.toLowerCase().includes(telemetrySearch.toLowerCase()) ||
         t.page_path?.toLowerCase().includes(telemetrySearch.toLowerCase())
@@ -1215,16 +1142,18 @@ const AdminSetup = () => {
                     {/* Navigation Menu - ALL features perfectly categorized into structured paths! */}
                     <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                         {[
-                            { id: 'ticket-options', label: 'Ticket Options', icon: <FileText size={16} /> },
-                            { id: 'system-branding', label: 'System Branding', icon: <Pencil size={16} /> },
-                            { id: 'user-management', label: 'User Management', icon: <UserCheck size={16} /> },
-                            { id: 'network-firewall', label: 'Network & Firewall', icon: <Shield size={16} /> },
-                            { id: 'broadcast-alerts', label: 'Broadcast Alerts', icon: <Megaphone size={16} /> },
-                            { id: 'telemetry-audits', label: 'Telemetry & DB Maintenance', icon: <Activity size={16} /> },
-                            { id: 'telemetry-scheduler', label: 'Telemetry Scheduler', icon: <RefreshCw size={16} /> },
-                            { id: 'share-history', label: 'Share History (Reports)', icon: <Eye size={16} /> },
-                            { id: 'alert-settings', label: 'Client Alert Settings', icon: <Bell size={16} /> }
-                        ].map((item) => {
+                            { id: 'user-roles', label: 'System Users', icon: <Users size={16} /> },
+                            { id: 'privilege-allocation', label: 'User Management', icon: <Shield size={16} /> },
+                            { id: 'client-database', label: 'Client Management', icon: <Database size={16} /> },
+                            { id: 'share-history', label: 'Share History', icon: <Eye size={16} /> },
+                            { id: 'alert-settings', label: 'Alert Settings', icon: <Bell size={16} /> },
+                            { id: 'user-telemetry', label: 'User Audit Logs', icon: <Clock size={16} /> }
+                        ].filter((item) => {
+                            if (user?.role === 'lead') {
+                                return item.id === 'user-roles';
+                            }
+                            return true;
+                        }).map((item) => {
                             const isActive = activeTab === item.id;
                             return (
                                 <button
@@ -1364,24 +1293,33 @@ const AdminSetup = () => {
                 {/* ======================================================================== */}
                 {/* TAB 1: TICKET OPTIONS (MATCHES USER SCREENSHOT EXACTLY!) */}
                 {/* ======================================================================== */}
-                {activeTab === 'ticket-options' && (
+                
+
+                {/* ======================================================================== */}
+                {/* TAB 2: SYSTEM BRANDING & APPLICATION LOGO */}
+                {/* ======================================================================== */}
+                
+
+                {/* ======================================================================== */}
+                {/* TAB 3A: USER ROLE MANAGEMENT */}
+                {/* ======================================================================== */}
+                {activeTab === 'user-roles' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
                         
                         {/* Heading */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div>
-                                <h1 style={{ fontSize: '2rem', fontWeight: '900', margin: 0, color: themeStyles.textMain, letterSpacing: '-0.75px' }}>Ticket Attributes Manager</h1>
-                                <p style={{ fontSize: '0.85rem', color: themeStyles.textMuted, margin: '6px 0 0 0' }}>Manage global ticket dropdown options, technologies, client databases, and specialists.</p>
+                                <h1 style={{ fontSize: '2rem', fontWeight: '900', margin: 0, color: themeStyles.textMain, letterSpacing: '-0.75px' }}>System Users</h1>
+                                <p style={{ fontSize: '0.85rem', color: themeStyles.textMuted, margin: '6px 0 0 0' }}>Manage application users and monitor their activity.</p>
                             </div>
                         </div>
 
                         {/* Interactive Telemetry KPI Row */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
                             {[
-                                { title: 'Total Ticket Agents', count: ticketAgentsList.length, icon: <Users size={20} color="#ffaa00" />, desc: 'Allocated to active queues', gradient: 'linear-gradient(135deg, rgba(255, 170, 0, 0.08) 0%, rgba(255, 170, 0, 0.02) 100%)', border: 'rgba(255,170,0,0.15)' },
-                                { title: 'Active Business Units', count: buList.length, icon: <Briefcase size={20} color="#38bdf8" />, desc: 'Organizational sectors', gradient: 'linear-gradient(135deg, rgba(56, 189, 248, 0.08) 0%, rgba(56, 189, 248, 0.02) 100%)', border: 'rgba(56,189,248,0.15)' },
-                                { title: 'Client Environments', count: clientsList.length, icon: <Database size={20} color="#34d399" />, desc: 'Registered databases', gradient: 'linear-gradient(135deg, rgba(52, 211, 153, 0.08) 0%, rgba(52, 211, 153, 0.02) 100%)', border: 'rgba(52,211,153,0.15)' },
-                                { title: 'Specialists Directory', count: agentsList.length, icon: <Shield size={20} color="#a78bfa" />, desc: 'SLA Escalation specialists', gradient: 'linear-gradient(135deg, rgba(167, 139, 250, 0.08) 0%, rgba(167, 139, 250, 0.02) 100%)', border: 'rgba(167,139,250,0.15)' }
+                                { title: 'Registered Logins', count: loginUsersList.length, icon: <Users size={20} color="#ffaa00" />, desc: 'Active web accounts', gradient: 'linear-gradient(135deg, rgba(255, 170, 0, 0.08) 0%, rgba(255, 170, 0, 0.02) 100%)', border: 'rgba(255,170,0,0.15)' },
+                                { title: 'Online Users', count: loginUsersList.filter(u => isUserActive(u.last_active_at)).length, icon: <Activity size={20} color="#10b981" />, desc: 'Active within 5 mins', gradient: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(16, 185, 129, 0.02) 100%)', border: 'rgba(16,185,129,0.15)' },
+                                { title: 'Overseen Assignments', count: leadActivityList.length, icon: <UserCheck size={20} color="#38bdf8" />, desc: 'Lead-monitored users', gradient: 'linear-gradient(135deg, rgba(56, 189, 248, 0.08) 0%, rgba(56, 189, 248, 0.02) 100%)', border: 'rgba(56,189,248,0.15)' }
                             ].map((kpi, idx) => (
                                 <div key={idx} style={{
                                     background: isLight ? '#ffffff' : themeStyles.cardBg,
@@ -1419,127 +1357,868 @@ const AdminSetup = () => {
                             ))}
                         </div>
 
-                        {/* Three side-by-side attributes columns with pixel-perfect bottom alignments */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.75rem' }}>
-                            
-                            {/* COLUMN 1: Manage Support Agents */}
-                            <div style={{
-                                background: themeStyles.cardBg,
-                                border: themeStyles.cardBorder,
-                                borderRadius: '20px',
-                                padding: '2rem',
-                                height: '540px',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                boxShadow: isLight ? '0 10px 15px -3px rgba(0,0,0,0.02)' : '0 10px 30px rgba(0,0,0,0.15)'
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem', flexShrink: 0 }}>
-                                    <div style={{
-                                        width: '36px',
-                                        height: '36px',
-                                        borderRadius: '10px',
-                                        background: 'rgba(167, 139, 250, 0.1)',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontSize: '1.1rem'
-                                    }}>
-                                        👥
+                        {/* System Users Full-Width Table */}
+                        <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', overflow: 'hidden' }}>
+                            {/* Table header row */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 120px 180px 48px', padding: '10px 20px', borderBottom: themeStyles.rowBorder, gap: '8px' }}>
+                                <span style={{ fontSize: '0.7rem', fontWeight: '800', color: themeStyles.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>User</span>
+                                <span style={{ fontSize: '0.7rem', fontWeight: '800', color: themeStyles.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Email</span>
+                                <span style={{ fontSize: '0.7rem', fontWeight: '800', color: themeStyles.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Role</span>
+                                <span style={{ fontSize: '0.7rem', fontWeight: '800', color: themeStyles.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Last Active</span>
+                                <span />
+                            </div>
+
+                            {/* Search bar */}
+                            <div style={{ padding: '12px 20px', borderBottom: themeStyles.rowBorder, display: 'flex', justifyContent: 'flex-end' }}>
+                                <input
+                                    type="text"
+                                    placeholder="Search users..."
+                                    value={loginUsersSearch}
+                                    onChange={e => setLoginUsersSearch(e.target.value)}
+                                    style={{ padding: '7px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.78rem', outline: 'none', width: '200px' }}
+                                />
+                            </div>
+
+                            {/* Rows */}
+                            <div style={{ maxHeight: '520px', overflowY: 'auto' }} className="custom-scrollbar">
+                                {loginUsersList
+                                    .filter(u =>
+                                        u.username?.toLowerCase().includes(loginUsersSearch.toLowerCase()) ||
+                                        u.email?.toLowerCase().includes(loginUsersSearch.toLowerCase()) ||
+                                        u.full_name?.toLowerCase().includes(loginUsersSearch.toLowerCase())
+                                    )
+                                    .map(item => {
+                                        const active = isUserActive(item.last_active_at);
+                                        const roleColors = {
+                                            admin:  { bg: 'rgba(234,88,12,0.15)',  text: '#ea580c' },
+                                            lead:   { bg: 'rgba(139,92,246,0.15)', text: '#8b5cf6' },
+                                            client: { bg: 'rgba(37,99,235,0.15)',  text: '#3b82f6' },
+                                            user:   { bg: 'transparent', text: themeStyles.textMain }
+                                        };
+                                        const rc = roleColors[item.role] || roleColors.user;
+                                        const roleLabel = item.role === 'user' ? 'USER' : item.role === 'admin' ? 'ADMIN' : item.role === 'lead' ? 'LEAD' : item.role.toUpperCase();
+                                        const initial = (item.full_name || item.username || 'U')[0].toUpperCase();
+                                        const avatarColors = ['#f59e0b','#3b82f6','#10b981','#8b5cf6','#ef4444','#06b6d4','#ec4899'];
+                                        const avatarBg = avatarColors[(initial.charCodeAt(0)) % avatarColors.length];
+                                        return (
+                                            <div
+                                                key={item.id}
+                                                style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 120px 180px 48px', padding: '12px 20px', gap: '8px', alignItems: 'center', borderBottom: themeStyles.rowBorder }}
+                                                className="table-row-hover"
+                                            >
+                                                {/* USER column */}
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                    {item.profile_pic ? (
+                                                        <img src={item.profile_pic} alt="" style={{ width: 32, height: 32, borderRadius: '50%', flexShrink: 0 }} />
+                                                    ) : (
+                                                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: avatarBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.82rem', fontWeight: '800', color: '#fff', flexShrink: 0 }}>
+                                                            {initial}
+                                                        </div>
+                                                    )}
+                                                    <span style={{ fontWeight: '700', fontSize: '0.84rem', color: themeStyles.textMain }}>{item.full_name || item.username}</span>
+                                                </div>
+
+                                                {/* EMAIL column */}
+                                                <span style={{ fontSize: '0.82rem', color: themeStyles.textMuted }}>{item.email}</span>
+
+                                                {/* ROLE column */}
+                                                <div>
+                                                    {item.role === 'admin' || item.role === 'lead' ? (
+                                                        <span style={{ fontSize: '0.7rem', fontWeight: '800', background: rc.bg, color: rc.text, padding: '3px 9px', borderRadius: '5px', letterSpacing: '0.04em' }}>{roleLabel}</span>
+                                                    ) : (
+                                                        <span style={{ fontSize: '0.82rem', color: themeStyles.textMain }}>{roleLabel}</span>
+                                                    )}
+                                                </div>
+
+                                                {/* LAST ACTIVE column */}
+                                                <span style={{ fontSize: '0.78rem', color: themeStyles.textMuted }}>{item.last_active_at || '—'}</span>
+
+                                                {/* ACTION column */}
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
+                                                    {user?.role !== 'lead' && (
+                                                        <button
+                                                            onClick={() => handleToggleAdmin(item.username, item.role)}
+                                                            style={{ background: 'none', border: 'none', color: item.role === 'admin' ? '#ea580c' : themeStyles.textMuted, cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+                                                            title={item.role === 'admin' ? 'Revoke Administrator' : 'Grant Administrator'}
+                                                        >
+                                                            {item.role === 'admin' ? <ShieldAlert size={15} /> : <ShieldCheck size={15} />}
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        onClick={() => handleDeleteLoginUser(item.id)}
+                                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' }}
+                                                        title="Delete user"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                }
+                                {loginUsersList.filter(u =>
+                                    u.username?.toLowerCase().includes(loginUsersSearch.toLowerCase()) ||
+                                    u.email?.toLowerCase().includes(loginUsersSearch.toLowerCase()) ||
+                                    u.full_name?.toLowerCase().includes(loginUsersSearch.toLowerCase())
+                                ).length === 0 && (
+                                    <div style={{ padding: '3rem', textAlign: 'center', color: themeStyles.textMuted, fontSize: '0.85rem' }}>No users found.</div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Add new user – collapsible form below table */}
+                        <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '1.75rem 2rem' }}>
+                            <h3 style={{ fontSize: '1rem', fontWeight: '800', color: '#ffaa00', margin: '0 0 1.25rem 0' }}>Create Login Account</h3>
+                            <form onSubmit={handleAddLoginUser} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '5px', textTransform: 'uppercase' }}>Username</label>
+                                        <input type="text" placeholder="e.g. john" value={newLoginUsername} onChange={e => setNewLoginUsername(e.target.value)} required autoComplete="new-username"
+                                            style={{ width: '100%', padding: '10px 13px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }} />
                                     </div>
                                     <div>
-                                        <h3 style={{ fontSize: '1.05rem', fontWeight: '850', margin: 0, color: themeStyles.textMain }}>Manage Support Agents</h3>
-                                        <p style={{ fontSize: '0.72rem', color: themeStyles.textMuted, margin: '2px 0 0 0' }}>Assign ticketing directory roles</p>
+                                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '5px', textTransform: 'uppercase' }}>Full Name</label>
+                                        <input type="text" placeholder="e.g. John Doe" value={newLoginFullName} onChange={e => setNewLoginFullName(e.target.value)} required autoComplete="off"
+                                            style={{ width: '100%', padding: '10px 13px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }} />
+                                    </div>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '5px', textTransform: 'uppercase' }}>Email</label>
+                                        <input type="email" placeholder="e.g. john@geopits.com" value={newLoginEmail} onChange={e => setNewLoginEmail(e.target.value)} required autoComplete="new-email"
+                                            style={{ width: '100%', padding: '10px 13px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }} />
+                                    </div>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '5px', textTransform: 'uppercase' }}>Password</label>
+                                        <input type="password" placeholder="••••••••" value={newLoginPassword} onChange={e => setNewLoginPassword(e.target.value)} required autoComplete="new-password"
+                                            style={{ width: '100%', padding: '10px 13px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }} />
+                                    </div>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '5px', textTransform: 'uppercase' }}>Role</label>
+                                        <select value={newLoginRole} onChange={e => setNewLoginRole(e.target.value)}
+                                            style={{ width: '100%', padding: '10px 13px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none', cursor: 'pointer' }}>
+                                            <option value="user">System User</option>
+                                            <option value="client">Client User</option>
+                                            {user?.role !== 'lead' && <option value="lead">Lead</option>}
+                                            {user?.role !== 'lead' && <option value="admin">Administrator</option>}
+                                        </select>
                                     </div>
                                 </div>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button type="submit" style={{ padding: '10px 24px', background: '#ffaa00', color: '#000', border: 'none', borderRadius: '8px', fontWeight: '800', fontSize: '0.84rem', cursor: 'pointer' }}>
+                                        Create Account
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
 
-                                <form onSubmit={handleAddTicketAgent} style={{ display: 'flex', gap: '8px', marginBottom: '1.5rem', flexShrink: 0 }}>
+                        {/* User Oversight (Lead-Assigned Activity) */}
+                        <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                                <div>
+                                    <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', margin: 0 }}>Lead-Assigned User Oversight</h3>
+                                    <p style={{ fontSize: '0.72rem', color: themeStyles.textMuted, margin: '2px 0 0 0' }}>Monitor user environments assigned by technology leads.</p>
+                                </div>
+                            </div>
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: themeStyles.rowBorder, color: themeStyles.textMuted }}>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Assigned User</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Technology</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Overseeing Lead(s)</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Activity Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {leadActivityLoading ? (
+                                            <tr>
+                                                <td colSpan="4" style={{ padding: '2rem', textAlign: 'center', color: themeStyles.textMuted }}>Loading oversight data...</td>
+                                            </tr>
+                                        ) : leadActivityList.length === 0 ? (
+                                            <tr>
+                                                <td colSpan="4" style={{ padding: '2rem', textAlign: 'center', color: themeStyles.textMuted }}>No lead-assigned user records found.</td>
+                                            </tr>
+                                        ) : (
+                                            leadActivityList.map(act => (
+                                                <tr key={act.id} style={{ borderBottom: themeStyles.rowBorder }}>
+                                                    <td style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                        {act.profile_pic ?
+                                                            <img src={act.profile_pic} alt="" style={{ width: 30, height: 30, borderRadius: '50%', border: '1px solid rgba(255,255,255,0.1)' }} /> :
+                                                            <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'linear-gradient(135deg, #ffaa00 0%, #d97706 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 'bold', color: '#000' }}>
+                                                                {act.username && act.username[0] ? act.username[0].toUpperCase() : (act.user_email && act.user_email[0] ? act.user_email[0].toUpperCase() : 'U')}
+                                                            </div>
+                                                        }
+                                                        <div>
+                                                            <div style={{ fontWeight: '700', color: themeStyles.textMain }}>{act.user_name || act.username || (act.user_email ? act.user_email.split('@')[0] : 'User')}</div>
+                                                            <div style={{ fontSize: '0.68rem', color: themeStyles.textMuted }}>{act.user_email}</div>
+                                                        </div>
+                                                    </td>
+                                                    <td style={{ padding: '14px 16px' }}>
+                                                        <span style={{ fontSize: '0.65rem', fontWeight: '800', background: 'rgba(255, 170, 0, 0.1)', color: '#ffaa00', padding: '2px 6px', borderRadius: '4px' }}>
+                                                            {act.technology}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ padding: '14px 16px', color: themeStyles.textMain, fontWeight: '600' }}>
+                                                        {act.lead_emails || 'No active lead!'}
+                                                    </td>
+                                                    <td style={{ padding: '14px 16px' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                            <div style={{
+                                                                width: '8px', height: '8px', borderRadius: '50%',
+                                                                background: isUserActive(act.last_active_at) ? '#10b981' : themeStyles.textMuted,
+                                                                boxShadow: isUserActive(act.last_active_at) ? '0 0 8px #10b981' : 'none'
+                                                            }} />
+                                                            <span style={{ color: isUserActive(act.last_active_at) ? '#10b981' : themeStyles.textMuted, fontSize: '0.75rem', fontWeight: '600' }}>
+                                                                {isUserActive(act.last_active_at) ? 'Online' : (act.last_active_at === 'Never' ? 'Pending' : act.last_active_at)}
+                                                            </span>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                    </div>
+                )}
+
+                {/* ======================================================================== */}
+                {/* ======================================================================== */}
+                {/* TAB 3B: PRIVILEGE ALLOCATION */}
+                {activeTab === 'privilege-allocation' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+
+                        {/* Page Header */}
+                        <div>
+                            <h1 style={{ fontSize: '1.75rem', fontWeight: '900', margin: 0, color: themeStyles.textMain, letterSpacing: '-0.5px' }}>User Management (Privileges)</h1>
+                            <p style={{ fontSize: '0.82rem', color: themeStyles.textMuted, margin: '5px 0 0 0' }}>Configure technology-specific access and user roles.</p>
+                        </div>
+
+                        {/* Grant New Privilege Card */}
+                        <div style={{
+                            background: themeStyles.cardBg,
+                            border: themeStyles.cardBorder,
+                            borderRadius: '14px',
+                            padding: '1.5rem 1.75rem'
+                        }}>
+                            <h3 style={{ fontSize: '1rem', fontWeight: '800', color: themeStyles.textMain, margin: '0 0 1rem 0' }}>Grant New Privilege</h3>
+                            <form onSubmit={handleAssignPermission}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                    {/* Email */}
                                     <input
-                                        type="text"
-                                        placeholder="Enter agent name..."
-                                        value={newTicketAgentName}
-                                        onChange={(e) => setNewTicketAgentName(e.target.value)}
+                                        type="email"
+                                        placeholder="Lead Email (e.g. user@gmail.com)"
+                                        value={permEmail}
+                                        onChange={e => setPermEmail(e.target.value)}
                                         required
                                         style={{
-                                            flex: 1,
-                                            padding: '12px 14px',
-                                            borderRadius: '10px',
+                                            flex: '1',
+                                            minWidth: '220px',
+                                            padding: '9px 14px',
+                                            borderRadius: '8px',
+                                            background: themeStyles.inputBg,
+                                            border: themeStyles.inputBorder,
+                                            color: themeStyles.textMain,
+                                            fontSize: '0.82rem',
+                                            outline: 'none'
+                                        }}
+                                    />
+
+                                    {/* Technology multi-select (shown as dropdown toggle) */}
+                                    <div style={{ position: 'relative' }}>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowTechDropdown(prev => !prev)}
+                                            style={{
+                                                padding: '9px 14px',
+                                                borderRadius: '8px',
+                                                background: themeStyles.inputBg,
+                                                border: themeStyles.inputBorder,
+                                                color: selectedPermTechs.length > 0 ? themeStyles.textMain : themeStyles.textMuted,
+                                                fontSize: '0.82rem',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '8px',
+                                                minWidth: '190px',
+                                                justifyContent: 'space-between'
+                                            }}
+                                        >
+                                            <span>
+                                                {selectedPermTechs.length === 0
+                                                    ? 'Select Technologies'
+                                                    : selectedPermTechs.length === 1
+                                                        ? selectedPermTechs[0]
+                                                        : `${selectedPermTechs.length} Technologies`}
+                                            </span>
+                                            <ChevronDown size={13} />
+                                        </button>
+                                        {showTechDropdown && (
+                                            <div style={{
+                                                position: 'absolute',
+                                                top: '110%',
+                                                left: 0,
+                                                zIndex: 200,
+                                                background: isLight ? '#fff' : '#1a1f35',
+                                                border: themeStyles.cardBorder,
+                                                borderRadius: '10px',
+                                                padding: '10px 14px',
+                                                minWidth: '190px',
+                                                boxShadow: '0 8px 24px rgba(0,0,0,0.25)'
+                                            }}>
+                                                {AVAILABLE_TECHS.map(tech => {
+                                                    const isSel = selectedPermTechs.includes(tech);
+                                                    return (
+                                                        <label key={tech} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 0', cursor: 'pointer', fontSize: '0.83rem', color: themeStyles.textMain }}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={isSel}
+                                                                onChange={() => {
+                                                                    if (isSel) {
+                                                                        if (selectedPermTechs.length > 1) setSelectedPermTechs(selectedPermTechs.filter(t => t !== tech));
+                                                                    } else {
+                                                                        setSelectedPermTechs([...selectedPermTechs, tech]);
+                                                                    }
+                                                                }}
+                                                                style={{ accentColor: '#ffaa00', width: '14px', height: '14px' }}
+                                                            />
+                                                            {tech}
+                                                        </label>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Role */}
+                                    <select
+                                        value={permRole}
+                                        onChange={e => setPermRole(e.target.value)}
+                                        style={{
+                                            padding: '9px 14px',
+                                            borderRadius: '8px',
                                             background: themeStyles.inputBg,
                                             border: themeStyles.inputBorder,
                                             color: themeStyles.textMain,
                                             fontSize: '0.82rem',
                                             outline: 'none',
+                                            cursor: 'pointer',
+                                            minWidth: '140px'
+                                        }}
+                                    >
+                                        <option value="user">Regular User</option>
+                                        <option value="lead">Technology Lead</option>
+                                        <option value="admin">System Admin</option>
+                                    </select>
+
+                                    {/* Submit */}
+                                    <button
+                                        type="submit"
+                                        disabled={isLoading}
+                                        style={{
+                                            padding: '9px 22px',
+                                            background: '#ffaa00',
+                                            color: '#000',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            fontWeight: '800',
+                                            fontSize: '0.84rem',
+                                            cursor: isLoading ? 'not-allowed' : 'pointer',
+                                            whiteSpace: 'nowrap',
+                                            opacity: isLoading ? 0.7 : 1,
                                             transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        {isLoading ? 'Assigning...' : 'Assign Privilege'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+
+                        {/* Active Assignments Table */}
+                        <div style={{
+                            background: themeStyles.cardBg,
+                            border: themeStyles.cardBorder,
+                            borderRadius: '14px',
+                            overflow: 'hidden'
+                        }}>
+                            {/* Table toolbar */}
+                            <div style={{
+                                padding: '14px 20px',
+                                borderBottom: themeStyles.rowBorder,
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                flexWrap: 'wrap',
+                                gap: '10px'
+                            }}>
+                                <h3 style={{ fontSize: '1rem', fontWeight: '800', color: themeStyles.textMain, margin: 0 }}>
+                                    Active Assignments
+                                </h3>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <span style={{ fontSize: '0.78rem', color: themeStyles.textMuted, fontWeight: '600' }}>
+                                        {filteredPermissions.length} Records Found
+                                    </span>
+                                    <input
+                                        type="text"
+                                        placeholder="Search..."
+                                        value={permissionsSearch}
+                                        onChange={e => setPermissionsSearch(e.target.value)}
+                                        style={{
+                                            padding: '6px 12px',
+                                            borderRadius: '7px',
+                                            background: themeStyles.inputBg,
+                                            border: themeStyles.inputBorder,
+                                            color: themeStyles.textMain,
+                                            fontSize: '0.78rem',
+                                            outline: 'none',
+                                            width: '150px'
                                         }}
                                     />
                                     <button
-                                        type="submit"
-                                        style={{
-                                            padding: '12px 20px',
-                                            background: '#ffaa00',
-                                            color: '#000000',
-                                            border: 'none',
-                                            borderRadius: '10px',
-                                            fontWeight: '800',
-                                            fontSize: '0.82rem',
-                                            cursor: 'pointer',
-                                            boxShadow: '0 2px 4px rgba(255,170,0,0.2)'
-                                        }}
+                                        onClick={fetchPermissionsList}
+                                        style={{ padding: '6px 10px', background: 'none', border: themeStyles.inputBorder, borderRadius: '7px', color: themeStyles.textMain, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                                     >
-                                        Add
+                                        <RefreshCw size={13} className={isLoading ? 'spin-anim' : ''} />
                                     </button>
-                                </form>
-
-                                <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }}>
-                                    {ticketAgentsList.length === 0 ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '8px' }}>
-                                            <span style={{ fontSize: '1.5rem' }}>📭</span>
-                                            <p style={{ fontSize: '0.76rem', color: themeStyles.textMuted, margin: 0 }}>No agents configured.</p>
-                                        </div>
-                                    ) : (
-                                        ticketAgentsList.map(agent => (
-                                            <div
-                                                key={agent.id}
-                                                style={{
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    alignItems: 'center',
-                                                    padding: '11px 14px',
-                                                    background: isLight ? '#f8fafc' : 'rgba(255, 255, 255, 0.01)',
-                                                    border: themeStyles.rowBorder,
-                                                    borderRadius: '10px',
-                                                    transition: 'all 0.2s'
-                                                }}
-                                                onMouseEnter={(e) => {
-                                                    e.currentTarget.style.background = isLight ? '#f1f5f9' : 'rgba(255,255,255,0.03)';
-                                                    e.currentTarget.style.transform = 'translateX(2px)';
-                                                }}
-                                                onMouseLeave={(e) => {
-                                                    e.currentTarget.style.background = isLight ? '#f8fafc' : 'rgba(255,255,255,0.01)';
-                                                    e.currentTarget.style.transform = 'translateX(0)';
-                                                }}
-                                            >
-                                                <span style={{ fontSize: '0.82rem', fontWeight: '700', color: themeStyles.textMain }}>{agent.name}</span>
-                                                <button
-                                                    onClick={() => handleDeleteTicketAgent(agent.id)}
-                                                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
-                                                    onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
-                                                >
-                                                    <Trash2 size={13} />
-                                                </button>
-                                            </div>
-                                        ))
-                                    )}
                                 </div>
                             </div>
 
-                            {/* COLUMN 2: Manage Business Units */}
+                            {/* Table */}
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: themeStyles.rowBorder }}>
+                                            {['Email Address', 'Technology', 'Status', 'Added On', 'Actions'].map((h, i) => (
+                                                <th key={i} style={{
+                                                    padding: '11px 18px',
+                                                    fontSize: '0.68rem',
+                                                    fontWeight: '800',
+                                                    color: themeStyles.textMuted,
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: '0.06em',
+                                                    whiteSpace: 'nowrap'
+                                                }}>{h}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {filteredPermissions.length === 0 ? (
+                                            <tr>
+                                                <td colSpan="5" style={{ padding: '2.5rem', textAlign: 'center', color: themeStyles.textMuted, fontSize: '0.85rem' }}>
+                                                    No privilege scopes configured yet.
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            filteredPermissions.map(item => {
+                                                const isActive = item.status === 'active' || item.status === 'Active';
+
+                                                // Tech badge color map
+                                                const techColors = {
+                                                    'Global': { bg: 'rgba(255,170,0,0.15)', color: '#ffaa00' },
+                                                    'MSSQL':  { bg: 'rgba(251,146,60,0.15)', color: '#fb923c' },
+                                                    'MySQL':  { bg: 'rgba(52,211,153,0.15)', color: '#34d399' },
+                                                    'MongoDB':{ bg: 'rgba(52,211,153,0.15)', color: '#34d399' },
+                                                    'PostgreSQL': { bg: 'rgba(96,165,250,0.15)', color: '#60a5fa' },
+                                                    'Oracle': { bg: 'rgba(239,68,68,0.15)', color: '#ef4444' },
+                                                };
+
+                                                // Role badge
+                                                const roleLabel = (item.role === 'admin' ? 'admin' : (item.is_lead || item.role === 'lead' ? 'lead' : 'user')).toUpperCase();
+                                                const roleBadge = {
+                                                    'ADMIN': { bg: 'rgba(239,68,68,0.18)', color: '#ef4444' },
+                                                    'LEAD':  { bg: 'rgba(168,85,247,0.18)', color: '#a855f7' },
+                                                    'USER':  { bg: 'rgba(100,116,139,0.18)', color: '#94a3b8' },
+                                                };
+                                                const rb = roleBadge[roleLabel] || roleBadge['USER'];
+
+                                                // Parse techs
+                                                const techs = (item.technology || '').split(',').map(t => t.trim()).filter(Boolean);
+
+                                                return (
+                                                    <tr key={item.id} style={{ borderBottom: themeStyles.rowBorder }} className="table-row-hover">
+                                                        {/* Email */}
+                                                        <td style={{ padding: '13px 18px', color: themeStyles.textMain, fontWeight: '600', fontSize: '0.85rem' }}>
+                                                            {item.email}
+                                                        </td>
+
+                                                        {/* Technology + Role badge */}
+                                                        <td style={{ padding: '13px 18px' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                                                {techs.map((tech, idx) => {
+                                                                    const tc = techColors[tech] || { bg: 'rgba(255,170,0,0.12)', color: '#ffaa00' };
+                                                                    return (
+                                                                        <span key={idx} style={{
+                                                                            fontSize: '0.72rem',
+                                                                            fontWeight: '800',
+                                                                            background: tc.bg,
+                                                                            color: tc.color,
+                                                                            padding: '2px 8px',
+                                                                            borderRadius: '5px',
+                                                                            letterSpacing: '0.03em'
+                                                                        }}>{tech}</span>
+                                                                    );
+                                                                })}
+                                                                <span style={{
+                                                                    fontSize: '0.68rem',
+                                                                    fontWeight: '800',
+                                                                    background: rb.bg,
+                                                                    color: rb.color,
+                                                                    padding: '2px 7px',
+                                                                    borderRadius: '5px',
+                                                                    letterSpacing: '0.04em'
+                                                                }}>{roleLabel}</span>
+                                                            </div>
+                                                        </td>
+
+                                                        {/* Status */}
+                                                        <td style={{ padding: '13px 18px' }}>
+                                                            <span style={{
+                                                                fontSize: '0.72rem',
+                                                                fontWeight: '800',
+                                                                padding: '3px 10px',
+                                                                borderRadius: '5px',
+                                                                letterSpacing: '0.05em',
+                                                                background: isActive ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                                                                color: isActive ? '#10b981' : '#ef4444'
+                                                            }}>
+                                                                {isActive ? 'ACTIVE' : 'REMOVED'}
+                                                            </span>
+                                                        </td>
+
+                                                        {/* Added On */}
+                                                        <td style={{ padding: '13px 18px', color: themeStyles.textMuted, fontSize: '0.8rem' }}>
+                                                            {item.created_at || '—'}
+                                                        </td>
+
+                                                        {/* Actions */}
+                                                        <td style={{ padding: '13px 18px' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                                                                {isActive ? (
+                                                                    <button
+                                                                        onClick={() => handleTogglePermissionStatus(item.id)}
+                                                                        style={{
+                                                                            padding: '5px 14px',
+                                                                            background: '#ffaa00',
+                                                                            color: '#000',
+                                                                            border: 'none',
+                                                                            borderRadius: '6px',
+                                                                            fontWeight: '800',
+                                                                            fontSize: '0.75rem',
+                                                                            cursor: 'pointer',
+                                                                            whiteSpace: 'nowrap'
+                                                                        }}
+                                                                    >
+                                                                        Revoke Access
+                                                                    </button>
+                                                                ) : (
+                                                                    <button
+                                                                        onClick={() => handleTogglePermissionStatus(item.id)}
+                                                                        style={{
+                                                                            padding: '5px 14px',
+                                                                            background: 'transparent',
+                                                                            color: '#10b981',
+                                                                            border: '1.5px solid #10b981',
+                                                                            borderRadius: '6px',
+                                                                            fontWeight: '800',
+                                                                            fontSize: '0.75rem',
+                                                                            cursor: 'pointer',
+                                                                            whiteSpace: 'nowrap'
+                                                                        }}
+                                                                    >
+                                                                        Reactivate
+                                                                    </button>
+                                                                )}
+                                                                <button
+                                                                    onClick={() => handleDeletePermission(item.id)}
+                                                                    style={{
+                                                                        padding: '5px 14px',
+                                                                        background: '#ef4444',
+                                                                        color: '#fff',
+                                                                        border: 'none',
+                                                                        borderRadius: '6px',
+                                                                        fontWeight: '800',
+                                                                        fontSize: '0.75rem',
+                                                                        cursor: 'pointer',
+                                                                        whiteSpace: 'nowrap'
+                                                                    }}
+                                                                >
+                                                                    Delete
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                {activeTab === 'client-database' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
+                        
+                        {/* Heading */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <h1 style={{ fontSize: '2rem', fontWeight: '900', margin: 0, color: themeStyles.textMain, letterSpacing: '-0.75px' }}>Client Management</h1>
+                                <p style={{ fontSize: '0.85rem', color: themeStyles.textMuted, margin: '6px 0 0 0' }}>Register clients, configure database routing, and manage business units.</p>
+                            </div>
+                        </div>
+
+                        {/* Client-Database KPIs */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
+                            {[
+                                { title: 'Registered Clients', count: clientsList.length, icon: <Users size={20} color="#ffaa00" />, desc: 'Registered corporations', gradient: 'linear-gradient(135deg, rgba(255, 170, 0, 0.08) 0%, rgba(255, 170, 0, 0.02) 100%)', border: 'rgba(255,170,0,0.15)' },
+                                { title: 'Business Units', count: buList.length, icon: <Briefcase size={20} color="#34d399" />, desc: 'Organizational sectors', gradient: 'linear-gradient(135deg, rgba(52, 211, 153, 0.08) 0%, rgba(52, 211, 153, 0.02) 100%)', border: 'rgba(52,211,153,0.15)' },
+                                { title: 'Environment Mappings', count: clientAccessList.length, icon: <Database size={20} color="#38bdf8" />, desc: 'Client email to server maps', gradient: 'linear-gradient(135deg, rgba(56, 189, 248, 0.08) 0%, rgba(56, 189, 248, 0.02) 100%)', border: 'rgba(56,189,248,0.15)' }
+                            ].map((kpi, idx) => (
+                                <div key={idx} style={{
+                                    background: isLight ? '#ffffff' : themeStyles.cardBg,
+                                    border: `1px solid ${isLight ? '#cbd5e1' : kpi.border}`,
+                                    borderRadius: '16px',
+                                    padding: '1.25rem 1.5rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    backgroundImage: isLight ? 'none' : kpi.gradient,
+                                    boxShadow: isLight ? '0 4px 6px rgba(0,0,0,0.02)' : 'none',
+                                    transition: 'transform 0.2s ease',
+                                    cursor: 'default'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
+                                >
+                                    <div>
+                                        <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px', color: themeStyles.textMuted }}>{kpi.title}</p>
+                                        <h3 style={{ margin: '8px 0 2px 0', fontSize: '1.75rem', fontWeight: '900', color: themeStyles.textMain }}>{kpi.count}</h3>
+                                        <p style={{ margin: 0, fontSize: '0.68rem', color: themeStyles.textMuted }}>{kpi.desc}</p>
+                                    </div>
+                                    <div style={{
+                                        width: '42px',
+                                        height: '42px',
+                                        borderRadius: '12px',
+                                        background: isLight ? '#f1f5f9' : 'rgba(255,255,255,0.03)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    }}>
+                                        {kpi.icon}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* SECTION 1: Client & Business Unit Directories (Grid of 2 columns) */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '2rem' }}>
+                            {/* Manage Company Clients */}
                             <div style={{
                                 background: themeStyles.cardBg,
                                 border: themeStyles.cardBorder,
                                 borderRadius: '20px',
                                 padding: '2rem',
-                                height: '540px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                boxShadow: isLight ? '0 10px 15px -3px rgba(0,0,0,0.02)' : '0 10px 30px rgba(0,0,0,0.15)'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.25rem', flexShrink: 0 }}>
+                                    <div style={{
+                                        width: '36px',
+                                        height: '36px',
+                                        borderRadius: '10px',
+                                        background: 'rgba(52, 211, 153, 0.1)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '1.1rem'
+                                    }}>
+                                        🏢
+                                    </div>
+                                    <div>
+                                        <h3 style={{ fontSize: '1.05rem', fontWeight: '850', margin: 0, color: themeStyles.textMain }}>
+                                            {editingClient ? 'Edit Company Client' : 'Register Company Client'}
+                                        </h3>
+                                        <p style={{ fontSize: '0.72rem', color: themeStyles.textMuted, margin: '2px 0 0 0' }}>
+                                            {editingClient ? `Editing client ID: ${editingClient.id}` : 'Register database client details'}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <form onSubmit={handleAddClient} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '1.25rem', flexShrink: 0 }}>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '4px', textTransform: 'uppercase' }}>Company Name</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Company name (e.g. Cropin)..."
+                                            value={newClientName}
+                                            onChange={(e) => setNewClientName(e.target.value)}
+                                            required
+                                            style={{
+                                                padding: '10px 12px',
+                                                borderRadius: '10px',
+                                                background: themeStyles.inputBg,
+                                                border: themeStyles.inputBorder,
+                                                color: themeStyles.textMain,
+                                                fontSize: '0.82rem',
+                                                outline: 'none',
+                                                width: '100%',
+                                                transition: 'all 0.2s'
+                                            }}
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '4px', textTransform: 'uppercase' }}>Client Email Address</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Alert emails (comma-separated: a@co.com, b@co.com)..."
+                                            value={newClientEmail}
+                                            onChange={(e) => setNewClientEmail(e.target.value)}
+                                            required
+                                            style={{
+                                                padding: '10px 12px',
+                                                borderRadius: '10px',
+                                                background: themeStyles.inputBg,
+                                                border: themeStyles.inputBorder,
+                                                color: themeStyles.textMain,
+                                                fontSize: '0.82rem',
+                                                outline: 'none',
+                                                width: '100%',
+                                                transition: 'all 0.2s'
+                                            }}
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '4px', textTransform: 'uppercase' }}>Client Phone Number</label>
+                                        <input
+                                            type="text"
+                                            placeholder="Contact phone number (optional)..."
+                                            value={newClientPhone}
+                                            onChange={(e) => setNewClientPhone(e.target.value)}
+                                            style={{
+                                                padding: '10px 12px',
+                                                borderRadius: '10px',
+                                                background: themeStyles.inputBg,
+                                                border: themeStyles.inputBorder,
+                                                color: themeStyles.textMain,
+                                                fontSize: '0.82rem',
+                                                outline: 'none',
+                                                width: '100%',
+                                                transition: 'all 0.2s'
+                                            }}
+                                        />
+                                    </div>
+
+                                    {/* Multi-Technology Selector Pills */}
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '4px', textTransform: 'uppercase' }}>
+                                            Database Technologies (Multi-Select)
+                                        </label>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', padding: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, borderRadius: '10px' }}>
+                                            {AVAILABLE_TECHS.map(tech => {
+                                                const isSelected = selectedTechs.includes(tech);
+                                                return (
+                                                    <button
+                                                        key={tech}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (isSelected) {
+                                                                if (selectedTechs.length > 1) {
+                                                                    setSelectedTechs(selectedTechs.filter(t => t !== tech));
+                                                                }
+                                                            } else {
+                                                                setSelectedTechs([...selectedTechs, tech]);
+                                                            }
+                                                        }}
+                                                        style={{
+                                                            padding: '5px 10px',
+                                                            borderRadius: '6px',
+                                                            fontSize: '0.72rem',
+                                                            fontWeight: '800',
+                                                            cursor: 'pointer',
+                                                            border: isSelected ? '1px solid #ffaa00' : themeStyles.rowBorder,
+                                                            background: isSelected ? 'rgba(255, 170, 0, 0.15)' : 'transparent',
+                                                            color: isSelected ? '#ffaa00' : themeStyles.textMuted,
+                                                            transition: 'all 0.15s'
+                                                        }}
+                                                    >
+                                                        {tech}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {editingClient ? (
+                                        <div style={{ display: 'flex', gap: '8px', width: '100%', marginTop: '6px' }}>
+                                            <button
+                                                type="submit"
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '10px',
+                                                    background: '#ffaa00',
+                                                    color: '#000000',
+                                                    border: 'none',
+                                                    borderRadius: '10px',
+                                                    fontWeight: '800',
+                                                    fontSize: '0.82rem',
+                                                    cursor: 'pointer',
+                                                    boxShadow: '0 2px 4px rgba(255,170,0,0.2)'
+                                                }}
+                                            >
+                                                Save Changes
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleCancelEditClient}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '10px',
+                                                    background: 'rgba(255,255,255,0.05)',
+                                                    color: themeStyles.textMain,
+                                                    border: themeStyles.inputBorder,
+                                                    borderRadius: '10px',
+                                                    fontWeight: '800',
+                                                    fontSize: '0.82rem',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            type="submit"
+                                            style={{
+                                                padding: '10px',
+                                                background: '#ffaa00',
+                                                color: '#000000',
+                                                border: 'none',
+                                                borderRadius: '10px',
+                                                fontWeight: '800',
+                                                fontSize: '0.82rem',
+                                                cursor: 'pointer',
+                                                width: '100%',
+                                                marginTop: '6px',
+                                                boxShadow: '0 2px 4px rgba(255,170,0,0.2)'
+                                            }}
+                                        >
+                                            Add Company Client
+                                        </button>
+                                    )}
+                                </form>
+                            </div>
+
+                            {/* Manage Business Units */}
+                            <div style={{
+                                background: themeStyles.cardBg,
+                                border: themeStyles.cardBorder,
+                                borderRadius: '20px',
+                                padding: '2rem',
                                 display: 'flex',
                                 flexDirection: 'column',
                                 boxShadow: isLight ? '0 10px 15px -3px rgba(0,0,0,0.02)' : '0 10px 30px rgba(0,0,0,0.15)'
@@ -1600,7 +2279,7 @@ const AdminSetup = () => {
                                     </button>
                                 </form>
 
-                                <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }}>
+                                <div className="custom-scrollbar" style={{ flex: 1, maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }}>
                                     {buList.length === 0 ? (
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '8px' }}>
                                             <span style={{ fontSize: '1.5rem' }}>📭</span>
@@ -1625,7 +2304,7 @@ const AdminSetup = () => {
                                                     e.currentTarget.style.transform = 'translateX(2px)';
                                                 }}
                                                 onMouseLeave={(e) => {
-                                                    e.currentTarget.style.background = isLight ? '#f8fafc' : 'rgba(255,255,255,0.01)';
+                                                    e.currentTarget.style.background = isLight ? '#f8fafc' : 'rgba(255, 255, 255, 0.01)';
                                                     e.currentTarget.style.transform = 'translateX(0)';
                                                 }}
                                             >
@@ -1643,1070 +2322,50 @@ const AdminSetup = () => {
                                     )}
                                 </div>
                             </div>
-
-                            {/* COLUMN 3: Manage Company Clients */}
-                            <div style={{
-                                background: themeStyles.cardBg,
-                                border: themeStyles.cardBorder,
-                                borderRadius: '20px',
-                                padding: '2rem',
-                                height: '620px',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                boxShadow: isLight ? '0 10px 15px -3px rgba(0,0,0,0.02)' : '0 10px 30px rgba(0,0,0,0.15)'
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.25rem', flexShrink: 0 }}>
-                                    <div style={{
-                                        width: '36px',
-                                        height: '36px',
-                                        borderRadius: '10px',
-                                        background: 'rgba(52, 211, 153, 0.1)',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontSize: '1.1rem'
-                                    }}>
-                                        🏢
-                                    </div>
-                                    <div>
-                                        <h3 style={{ fontSize: '1.05rem', fontWeight: '850', margin: 0, color: themeStyles.textMain }}>
-                                            {editingClient ? 'Edit Company Client' : 'Manage Company Clients'}
-                                        </h3>
-                                        <p style={{ fontSize: '0.72rem', color: themeStyles.textMuted, margin: '2px 0 0 0' }}>
-                                            {editingClient ? `Editing client ID: ${editingClient.id}` : 'Register database client details'}
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <form onSubmit={handleAddClient} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '1.25rem', flexShrink: 0 }}>
-                                    <input
-                                        type="text"
-                                        placeholder="Company name (e.g. Cropin)..."
-                                        value={newClientName}
-                                        onChange={(e) => setNewClientName(e.target.value)}
-                                        required
-                                        style={{
-                                            padding: '10px 12px',
-                                            borderRadius: '10px',
-                                            background: themeStyles.inputBg,
-                                            border: themeStyles.inputBorder,
-                                            color: themeStyles.textMain,
-                                            fontSize: '0.82rem',
-                                            outline: 'none',
-                                            width: '100%',
-                                            transition: 'all 0.2s',
-                                            marginBottom: '4px'
-                                        }}
-                                    />
-                                    
-                                    <select
-                                        value={newClientTech}
-                                        onChange={(e) => setNewClientTech(e.target.value)}
-                                        style={{
-                                            padding: '10px 12px',
-                                            borderRadius: '10px',
-                                            background: themeStyles.inputBg,
-                                            border: themeStyles.inputBorder,
-                                            color: themeStyles.textMain,
-                                            fontSize: '0.82rem',
-                                            outline: 'none',
-                                            cursor: 'pointer',
-                                            width: '100%',
-                                            marginBottom: '4px'
-                                        }}
-                                    >
-                                        <option value="MSSQL">MSSQL</option>
-                                        <option value="PostgreSQL">PostgreSQL</option>
-                                        <option value="MySQL">MySQL</option>
-                                        <option value="MongoDB">MongoDB</option>
-                                        <option value="Oracle">Oracle</option>
-                                    </select>
-
-                                    {editingClient ? (
-                                        <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
-                                            <button
-                                                type="submit"
-                                                style={{
-                                                    flex: 1,
-                                                    padding: '10px',
-                                                    background: '#ffaa00',
-                                                    color: '#000000',
-                                                    border: 'none',
-                                                    borderRadius: '10px',
-                                                    fontWeight: '800',
-                                                    fontSize: '0.82rem',
-                                                    cursor: 'pointer',
-                                                    boxShadow: '0 2px 4px rgba(255,170,0,0.2)'
-                                                }}
-                                            >
-                                                Save Changes
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={handleCancelEditClient}
-                                                style={{
-                                                    flex: 1,
-                                                    padding: '10px',
-                                                    background: 'rgba(255,255,255,0.05)',
-                                                    color: themeStyles.textMain,
-                                                    border: themeStyles.inputBorder,
-                                                    borderRadius: '10px',
-                                                    fontWeight: '800',
-                                                    fontSize: '0.82rem',
-                                                    cursor: 'pointer'
-                                                }}
-                                            >
-                                                Cancel
-                                            </button>
-                                        </div>
-                                    ) : (
-                                        <button
-                                            type="submit"
-                                            style={{
-                                                padding: '10px',
-                                                background: '#ffaa00',
-                                                color: '#000000',
-                                                border: 'none',
-                                                borderRadius: '10px',
-                                                fontWeight: '800',
-                                                fontSize: '0.82rem',
-                                                cursor: 'pointer',
-                                                width: '100%',
-                                                boxShadow: '0 2px 4px rgba(255,170,0,0.2)'
-                                            }}
-                                        >
-                                            Add Company
-                                        </button>
-                                    )}
-                                </form>
-
-                                <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }}>
-                                    {clientsList.length === 0 ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '8px' }}>
-                                            <span style={{ fontSize: '1.5rem' }}>📭</span>
-                                            <p style={{ fontSize: '0.76rem', color: themeStyles.textMuted, margin: 0 }}>No company clients found.</p>
-                                        </div>
-                                    ) : (
-                                        clientsList.map(client => (
-                                            <div
-                                                key={client.id}
-                                                style={{
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    alignItems: 'center',
-                                                    padding: '11px 14px',
-                                                    background: isLight ? '#f8fafc' : 'rgba(255, 255, 255, 0.01)',
-                                                    border: themeStyles.rowBorder,
-                                                    borderRadius: '10px',
-                                                    transition: 'all 0.2s'
-                                                }}
-                                                onMouseEnter={(e) => {
-                                                    e.currentTarget.style.background = isLight ? '#f1f5f9' : 'rgba(255,255,255,0.03)';
-                                                    e.currentTarget.style.transform = 'translateX(2px)';
-                                                }}
-                                                onMouseLeave={(e) => {
-                                                    e.currentTarget.style.background = isLight ? '#f8fafc' : 'rgba(255,255,255,0.01)';
-                                                    e.currentTarget.style.transform = 'translateX(0)';
-                                                }}
-                                            >
-                                                <div>
-                                                    <div style={{ fontSize: '0.82rem', fontWeight: '800', color: themeStyles.textMain }}>{client.client_name}</div>
-                                                    <div style={{ fontSize: '0.68rem', color: themeStyles.textMuted, marginTop: '2px' }}>
-                                                        {client.db_type}
-                                                    </div>
-                                                </div>
-                                                <div style={{ display: 'flex', gap: '6px' }}>
-                                                    <button
-                                                        onClick={() => handleEditClientClick(client)}
-                                                        style={{ background: 'none', border: 'none', color: '#ffaa00', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 170, 0, 0.1)'; }}
-                                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
-                                                    >
-                                                        <Pencil size={13} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteClient(client.id)}
-                                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
-                                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
-                                                    >
-                                                        <Trash2 size={13} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
                         </div>
 
-                        {/* Manage Client Contacts Form & List */}
-                        <div style={{
-                            display: 'grid',
-                            gridTemplateColumns: '1fr 2fr',
-                            gap: '1.75rem',
-                            marginTop: '2rem'
-                        }}>
-                            {/* Card 1: Setup Contacts */}
-                            <div style={{
-                                background: themeStyles.cardBg,
-                                border: themeStyles.cardBorder,
-                                borderRadius: '20px',
-                                padding: '2rem',
-                                boxShadow: isLight ? '0 10px 15px -3px rgba(0,0,0,0.02)' : '0 10px 30px rgba(0,0,0,0.15)'
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.25rem' }}>
-                                    <div style={{
-                                        width: '36px',
-                                        height: '36px',
-                                        borderRadius: '10px',
-                                        background: 'rgba(255, 170, 0, 0.1)',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontSize: '1.1rem'
-                                    }}>
-                                        📧
-                                    </div>
-                                    <div>
-                                        <h3 style={{ fontSize: '1.05rem', fontWeight: '850', margin: 0, color: themeStyles.textMain }}>Manage Client Contacts</h3>
-                                        <p style={{ fontSize: '0.72rem', color: themeStyles.textMuted, margin: '2px 0 0 0' }}>Configure alert emails & phone numbers</p>
-                                    </div>
-                                </div>
-
-                                <form onSubmit={handleSaveClientContacts} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Select Client</label>
-                                        <select
-                                            value={contactClientName}
-                                            onChange={(e) => {
-                                                const selectedName = e.target.value;
-                                                setContactClientName(selectedName);
-                                                const matchedClient = clientsList.find(c => c.client_name === selectedName);
-                                                if (matchedClient) {
-                                                    setNewClientEmail(matchedClient.client_email || '');
-                                                    setNewClientPhone(matchedClient.phone_number || '');
-                                                } else {
-                                                    setNewClientEmail('');
-                                                    setNewClientPhone('');
-                                                }
-                                            }}
-                                            style={{
-                                                padding: '10px 12px',
-                                                borderRadius: '10px',
-                                                background: themeStyles.inputBg,
-                                                border: themeStyles.inputBorder,
-                                                color: themeStyles.textMain,
-                                                fontSize: '0.82rem',
-                                                outline: 'none',
-                                                cursor: 'pointer',
-                                                width: '100%'
-                                            }}
-                                        >
-                                            <option value="">-- Choose Client --</option>
-                                            {clientsList.map(client => (
-                                                <option key={client.id} value={client.client_name}>{client.client_name} ({client.db_type})</option>
-                                            ))}
-                                        </select>
-                                    </div>
-
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Client Email IDs</label>
-                                        <input
-                                            type="text"
-                                            placeholder="Enter mail IDs (e.g. alerts@company.com)..."
-                                            value={newClientEmail}
-                                            onChange={(e) => setNewClientEmail(e.target.value)}
-                                            required
-                                            style={{
-                                                padding: '10px 12px',
-                                                borderRadius: '10px',
-                                                background: themeStyles.inputBg,
-                                                border: themeStyles.inputBorder,
-                                                color: themeStyles.textMain,
-                                                fontSize: '0.82rem',
-                                                outline: 'none',
-                                                width: '100%',
-                                                transition: 'all 0.2s'
-                                            }}
-                                        />
-                                        <span style={{ fontSize: '0.65rem', color: themeStyles.textMuted, marginTop: '4px', display: 'block' }}>You can add multiple comma-separated emails.</span>
-                                    </div>
-
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Contact Number (Optional)</label>
-                                        <input
-                                            type="text"
-                                            placeholder="Contact phone number..."
-                                            value={newClientPhone}
-                                            onChange={(e) => setNewClientPhone(e.target.value)}
-                                            style={{
-                                                padding: '10px 12px',
-                                                borderRadius: '10px',
-                                                background: themeStyles.inputBg,
-                                                border: themeStyles.inputBorder,
-                                                color: themeStyles.textMain,
-                                                fontSize: '0.82rem',
-                                                outline: 'none',
-                                                width: '100%',
-                                                transition: 'all 0.2s'
-                                            }}
-                                        />
-                                    </div>
-
-                                    <button
-                                        type="submit"
-                                        style={{
-                                            padding: '10.5px',
-                                            background: '#ffaa00',
-                                            color: '#000000',
-                                            border: 'none',
-                                            borderRadius: '10px',
-                                            fontWeight: '800',
-                                            fontSize: '0.82rem',
-                                            cursor: 'pointer',
-                                            width: '100%',
-                                            boxShadow: '0 2px 4px rgba(255,170,0,0.2)',
-                                            marginTop: '6px'
-                                        }}
-                                    >
-                                        Save Client Contacts
-                                    </button>
-                                </form>
-                            </div>
-
-                            {/* Card 2: Contact Directory List */}
-                            <div style={{
-                                background: themeStyles.cardBg,
-                                border: themeStyles.cardBorder,
-                                borderRadius: '20px',
-                                padding: '2rem',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                boxShadow: isLight ? '0 10px 15px -3px rgba(0,0,0,0.02)' : '0 10px 30px rgba(0,0,0,0.15)'
-                            }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem' }}>
-                                    <div style={{
-                                        width: '36px',
-                                        height: '36px',
-                                        borderRadius: '10px',
-                                        background: 'rgba(52, 211, 153, 0.1)',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontSize: '1.1rem'
-                                    }}>
-                                        📞
-                                    </div>
-                                    <div>
-                                        <h3 style={{ fontSize: '1.05rem', fontWeight: '850', margin: 0, color: themeStyles.textMain }}>Client Contacts Directory</h3>
-                                        <p style={{ fontSize: '0.72rem', color: themeStyles.textMuted, margin: '2px 0 0 0' }}>Overview of registered client contact information</p>
-                                    </div>
-                                </div>
-
-                                <div className="custom-scrollbar" style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                    {clientsList.filter(c => c.client_email || c.phone_number).length === 0 ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '8px', padding: '2rem 0' }}>
-                                            <span style={{ fontSize: '1.5rem' }}>📭</span>
-                                            <p style={{ fontSize: '0.76rem', color: themeStyles.textMuted, margin: 0 }}>No client contacts configured yet.</p>
-                                        </div>
-                                    ) : (
-                                        clientsList.filter(c => c.client_email || c.phone_number).map(client => (
-                                            <div
-                                                key={client.id}
-                                                style={{
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    alignItems: 'center',
-                                                    padding: '12px 16px',
-                                                    background: isLight ? '#f8fafc' : 'rgba(255, 255, 255, 0.01)',
-                                                    border: themeStyles.rowBorder,
-                                                    borderRadius: '12px'
-                                                }}
-                                            >
-                                                <div>
-                                                    <div style={{ fontSize: '0.85rem', fontWeight: '800', color: themeStyles.textMain }}>{client.client_name}</div>
-                                                    <div style={{ fontSize: '0.72rem', color: themeStyles.textMuted, marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                                        <span><strong>Emails:</strong> {client.client_email || '—'}</span>
-                                                        {client.phone_number && <span><strong>Phone:</strong> {client.phone_number}</span>}
-                                                    </div>
-                                                </div>
-                                                <div style={{ display: 'flex', gap: '6px' }}>
-                                                    <button
-                                                        onClick={() => handleEditClientContactClick(client)}
-                                                        style={{ background: 'none', border: 'none', color: '#ffaa00', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255, 170, 0, 0.1)'; }}
-                                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
-                                                    >
-                                                        <Pencil size={13} />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteClientContact(client)}
-                                                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
-                                                        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
-                                                        onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
-                                                    >
-                                                        <Trash2 size={13} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* SUPPORT SPECIALISTS CONSOLE (ADMIN AGENTS TABLE) */}
-                        <div style={{
-                            background: themeStyles.cardBg,
-                            border: themeStyles.cardBorder,
-                            borderRadius: '16px',
-                            padding: '2rem',
-                            marginTop: '2rem'
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '0.75rem' }}>
-                                <span style={{ fontSize: '1.25rem' }}>🛡️</span>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', margin: 0, color: '#ffaa00' }}>Support Specialist Directory</h3>
-                            </div>
-                            <p style={{ fontSize: '0.82rem', color: themeStyles.textMuted, marginBottom: '1.5rem', lineHeight: '1.5' }}>
-                                Configure database engineers, client systems mapping, and dynamic technology scopes. These assignments are stored in the PostgreSQL database and determine high-priority SLA allocations.
-                            </p>
-
-                            <form onSubmit={handleAddAdminAgent} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '2rem' }}>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Specialist Name</label>
-                                    <input
-                                        type="text"
-                                        placeholder="E.g. Rathnagopal..."
-                                        value={adminAgentName}
-                                        onChange={(e) => setAdminAgentName(e.target.value)}
-                                        required
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 14px',
-                                            borderRadius: '8px',
-                                            background: themeStyles.inputBg,
-                                            border: themeStyles.inputBorder,
-                                            color: themeStyles.textMain,
-                                            fontSize: '0.82rem',
-                                            outline: 'none'
-                                        }}
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Client Scope (Company)</label>
-                                    <input
-                                        type="text"
-                                        placeholder="E.g. Cropin..."
-                                        value={adminAgentCompany}
-                                        onChange={(e) => setAdminAgentCompany(e.target.value)}
-                                        required
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 14px',
-                                            borderRadius: '8px',
-                                            background: themeStyles.inputBg,
-                                            border: themeStyles.inputBorder,
-                                            color: themeStyles.textMain,
-                                            fontSize: '0.82rem',
-                                            outline: 'none'
-                                        }}
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Business Unit</label>
-                                    <input
-                                        type="text"
-                                        placeholder="E.g. DBA Support..."
-                                        value={adminAgentBU}
-                                        onChange={(e) => setAdminAgentBU(e.target.value)}
-                                        required
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 14px',
-                                            borderRadius: '8px',
-                                            background: themeStyles.inputBg,
-                                            border: themeStyles.inputBorder,
-                                            color: themeStyles.textMain,
-                                            fontSize: '0.82rem',
-                                            outline: 'none'
-                                        }}
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Database Technology</label>
-                                    <select
-                                        value={adminAgentTech}
-                                        onChange={(e) => setAdminAgentTech(e.target.value)}
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 14px',
-                                            borderRadius: '8px',
-                                            background: themeStyles.inputBg,
-                                            border: themeStyles.inputBorder,
-                                            color: themeStyles.textMain,
-                                            fontSize: '0.82rem',
-                                            outline: 'none',
-                                            cursor: 'pointer'
-                                        }}
-                                    >
-                                        <option value="PostgreSQL">PostgreSQL</option>
-                                        <option value="MySQL">MySQL</option>
-                                        <option value="MongoDB">MongoDB</option>
-                                        <option value="Oracle">Oracle</option>
-                                        <option value="MSSQL">MSSQL</option>
-                                    </select>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-                                    <button
-                                        type="submit"
-                                        style={{
-                                            width: '100%',
-                                            padding: '11px',
-                                            background: '#ffaa00',
-                                            color: '#000000',
-                                            border: 'none',
-                                            borderRadius: '8px',
-                                            fontWeight: '800',
-                                            fontSize: '0.82rem',
-                                            cursor: 'pointer',
-                                            transition: 'all 0.2s'
-                                        }}
-                                    >
-                                        Register Specialist
-                                    </button>
-                                </div>
-                            </form>
-
-                            {/* Specialists Directory List */}
-                            <div style={{ overflowX: 'auto' }}>
-                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '600px' }}>
-                                    <thead>
-                                        <tr style={{ borderBottom: themeStyles.rowBorder }}>
-                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', color: themeStyles.textMuted, textTransform: 'uppercase', fontWeight: '800' }}>Specialist Engineer</th>
-                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', color: themeStyles.textMuted, textTransform: 'uppercase', fontWeight: '800' }}>Client Scope</th>
-                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', color: themeStyles.textMuted, textTransform: 'uppercase', fontWeight: '800' }}>Business Unit</th>
-                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', color: themeStyles.textMuted, textTransform: 'uppercase', fontWeight: '800' }}>Technology</th>
-                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', color: themeStyles.textMuted, textTransform: 'uppercase', fontWeight: '800' }}>Created At</th>
-                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', color: themeStyles.textMuted, textTransform: 'uppercase', fontWeight: '800', textAlign: 'right' }}>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {agentsList.length === 0 ? (
-                                            <tr>
-                                                <td colSpan="6" style={{ padding: '24px', textAlign: 'center', fontSize: '0.8rem', color: themeStyles.textMuted }}>
-                                                    No registered support specialists found in the database.
-                                                </td>
-                                            </tr>
-                                        ) : (
-                                            agentsList.map(item => (
-                                                <tr key={item.id} style={{ borderBottom: themeStyles.rowBorder }} className="table-row-hover">
-                                                    <td style={{ padding: '14px 16px', fontSize: '0.82rem', fontWeight: '700', color: themeStyles.textMain }}>
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                            <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(255, 170, 0, 0.1)', color: '#ffaa00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: '800' }}>
-                                                                {(item.agent_name || 'S')[0].toUpperCase()}
-                                                            </div>
-                                                            <span>{item.agent_name}</span>
-                                                        </div>
-                                                    </td>
-                                                    <td style={{ padding: '14px 16px', fontSize: '0.8rem', color: themeStyles.textMain }}>
-                                                        <span style={{ padding: '4px 8px', borderRadius: '6px', background: 'rgba(255,255,255,0.03)', border: themeStyles.rowBorder, fontWeight: '600' }}>
-                                                            {item.company_name}
-                                                        </span>
-                                                    </td>
-                                                    <td style={{ padding: '14px 16px', fontSize: '0.8rem', color: themeStyles.textMuted }}>
-                                                        {item.business_unit}
-                                                    </td>
-                                                    <td style={{ padding: '14px 16px', fontSize: '0.8rem' }}>
-                                                        <span style={{
-                                                            padding: '4px 8px',
-                                                            borderRadius: '12px',
-                                                            fontSize: '0.7rem',
-                                                            fontWeight: '800',
-                                                            border: '1px solid rgba(255,170,0,0.2)',
-                                                            color: '#ffaa00',
-                                                            background: 'rgba(255,170,0,0.05)'
-                                                        }}>
-                                                            {item.technology}
-                                                        </span>
-                                                    </td>
-                                                    <td style={{ padding: '14px 16px', fontSize: '0.75rem', color: themeStyles.textMuted }}>
-                                                        {new Date(item.created_at || Date.now()).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                                                    </td>
-                                                    <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                                                        <button
-                                                            onClick={() => handleDeleteAdminAgent(item.id)}
-                                                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
-                                                        >
-                                                            <Trash2 size={14} />
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                    </div>
-                )}
-
-                {/* ======================================================================== */}
-                {/* TAB 2: SYSTEM BRANDING & APPLICATION LOGO */}
-                {/* ======================================================================== */}
-                {activeTab === 'system-branding' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                        <div>
-                            <h1 style={{ fontSize: '1.8rem', fontWeight: '800', margin: 0, color: themeStyles.textMain, letterSpacing: '-0.5px' }}>Corporate System Branding</h1>
-                            <p style={{ fontSize: '0.85rem', color: themeStyles.textMuted, margin: '6px 0 0 0' }}>Configure application headers, dynamic logos, and themes globally.</p>
-                        </div>
-
-                        <div style={{
-                            background: themeStyles.cardBg,
-                            border: themeStyles.cardBorder,
-                            borderRadius: '16px',
-                            padding: '2rem'
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem' }}>
-                                <span style={{ fontSize: '1.25rem' }}>🎨</span>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', margin: 0, color: '#ffaa00' }}>System Branding & Application Logo</h3>
-                            </div>
-
-                            <p style={{ fontSize: '0.82rem', color: themeStyles.textMuted, lineHeight: '1.5', margin: '0 0 2rem 0' }}>
-                                Upload a custom logo to update the branding across the entire application (Login, main dashboard, portal headers, etc.). The logo will be permanently saved to the PostgreSQL database and served dynamically.
-                            </p>
-
-                            <div style={{ display: 'flex', gap: '3rem', flexWrap: 'wrap' }}>
-                                
-                                {/* Left Side: Preview */}
-                                <div style={{ flex: '1 1 280px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                    <span style={{ fontSize: '0.72rem', fontWeight: '800', textTransform: 'uppercase', color: themeStyles.textMuted, letterSpacing: '0.5px' }}>Current Dynamic Logo</span>
-                                    <div style={{
-                                        background: '#040508',
-                                        border: '1px solid #1a1c24',
-                                        borderRadius: '12px',
-                                        padding: '2.5rem',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        minHeight: '120px'
-                                    }}>
-                                        <img src={logoUrl} alt="Branding Logo" style={{ maxHeight: '42px', width: 'auto', objectFit: 'contain' }} />
-                                    </div>
-                                </div>
-
-                                {/* Right Side: File Upload */}
-                                <div style={{ flex: '2 1 400px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '1.25rem' }}>
-                                    <div>
-                                        <span style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', textTransform: 'uppercase', color: themeStyles.textMuted, marginBottom: '8px', letterSpacing: '0.5px' }}>Upload New Logo File</span>
-                                        <div style={{
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '12px',
-                                            background: themeStyles.inputBg,
-                                            border: themeStyles.inputBorder,
-                                            padding: '8px 12px',
-                                            borderRadius: '8px'
-                                        }}>
-                                            <input
-                                                type="file"
-                                                accept="image/*"
-                                                ref={fileInputRef}
-                                                onChange={handleLogoFileChange}
-                                                style={{
-                                                    fontSize: '0.8rem',
-                                                    color: themeStyles.textMain,
-                                                    width: '100%'
-                                                }}
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <div style={{ display: 'flex', gap: '12px' }}>
-                                        <button
-                                            onClick={handleSaveLogo}
-                                            disabled={isLoading}
-                                            style={{
-                                                flex: 1,
-                                                padding: '12px',
-                                                background: '#ffaa00',
-                                                color: '#000000',
-                                                border: 'none',
-                                                borderRadius: '8px',
-                                                fontWeight: '800',
-                                                fontSize: '0.85rem',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                gap: '8px'
-                                            }}
-                                        >
-                                            <Upload size={14} />
-                                            <span>Save Dynamic Logo to DB</span>
-                                        </button>
-                                        
-                                        <button
-                                            onClick={handleResetLogo}
-                                            disabled={isLoading}
-                                            style={{
-                                                padding: '12px 20px',
-                                                background: '#20222e',
-                                                color: '#ef4444',
-                                                border: '1px solid rgba(239, 68, 68, 0.2)',
-                                                borderRadius: '8px',
-                                                fontWeight: '700',
-                                                fontSize: '0.85rem',
-                                                cursor: 'pointer'
-                                            }}
-                                        >
-                                            Reset to Default Logo
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* ======================================================================== */}
-                {/* TAB 3: USER MANAGEMENT & ACTIVE DIRECTORY */}
-                {/* ======================================================================== */}
-                {activeTab === 'user-management' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                        <div>
-                            <h1 style={{ fontSize: '1.8rem', fontWeight: '800', margin: 0, color: themeStyles.textMain, letterSpacing: '-0.5px' }}>User Privileges & Directories</h1>
-                            <p style={{ fontSize: '0.85rem', color: themeStyles.textMuted, margin: '6px 0 0 0' }}>Assign access scopes, manage technologies, and register engineers on active duty.</p>
-                        </div>
-
-                        {/* System Login Accounts Section */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '2rem' }}>
-                            {/* Create Login Account Form */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', marginBottom: '0.5rem', color: '#ffaa00' }}>Create Login Account</h3>
-                                <p style={{ fontSize: '0.75rem', color: themeStyles.textMuted, marginBottom: '1.25rem' }}>Register a new user login credential. These credentials are used to access the application dashboard.</p>
-                                <form onSubmit={handleAddLoginUser} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Username</label>
-                                            <input
-                                                type="text"
-                                                placeholder="e.g. opyin"
-                                                value={newLoginUsername}
-                                                onChange={e => setNewLoginUsername(e.target.value)}
-                                                required
-                                                autoComplete="new-username"
-                                                style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                            />
-                                        </div>
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Full Name</label>
-                                            <input
-                                                type="text"
-                                                placeholder="e.g. Opyin Dev"
-                                                value={newLoginFullName}
-                                                onChange={e => setNewLoginFullName(e.target.value)}
-                                                required
-                                                autoComplete="off"
-                                                style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                            />
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Email Address</label>
-                                        <input
-                                            type="email"
-                                            placeholder="e.g. opyin@geopits.com"
-                                            value={newLoginEmail}
-                                            onChange={e => setNewLoginEmail(e.target.value)}
-                                            required
-                                            autoComplete="new-email"
-                                            style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                        />
-                                    </div>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Password</label>
-                                            <input
-                                                type="password"
-                                                placeholder="••••••••"
-                                                value={newLoginPassword}
-                                                onChange={e => setNewLoginPassword(e.target.value)}
-                                                required
-                                                autoComplete="new-password"
-                                                style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                            />
-                                        </div>
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Role</label>
-                                            <select
-                                                value={newLoginRole}
-                                                onChange={e => setNewLoginRole(e.target.value)}
-                                                style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                            >
-                                                <option value="user">Standard User</option>
-                                                <option value="client">Client User</option>
-                                                <option value="admin">Administrator</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <button
-                                        type="submit"
-                                        style={{ padding: '12px', background: '#ffaa00', color: '#000000', border: 'none', borderRadius: '8px', fontWeight: '800', fontSize: '0.85rem', cursor: 'pointer', marginTop: '6px' }}
-                                    >
-                                        Create Login Account
-                                    </button>
-                                </form>
-                            </div>
-
-                            {/* Active Login Accounts List */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <div>
-                                        <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', margin: 0 }}>Login Accounts Directory</h3>
-                                        <p style={{ fontSize: '0.72rem', color: themeStyles.textMuted, margin: '2px 0 0 0' }}>Manage all registered web application users.</p>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        placeholder="Search logins..."
-                                        value={loginUsersSearch}
-                                        onChange={e => setLoginUsersSearch(e.target.value)}
-                                        style={{ padding: '6px 12px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.75rem', outline: 'none', width: '150px' }}
-                                    />
-                                </div>
-
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '280px', overflowY: 'auto' }}>
-                                    {loginUsersList.filter(u => 
-                                        u.username?.toLowerCase().includes(loginUsersSearch.toLowerCase()) || 
-                                        u.email?.toLowerCase().includes(loginUsersSearch.toLowerCase()) || 
-                                        u.full_name?.toLowerCase().includes(loginUsersSearch.toLowerCase())
-                                    ).length === 0 ? (
-                                        <p style={{ fontSize: '0.82rem', color: themeStyles.textMuted, textAlign: 'center', padding: '1.5rem' }}>No user login accounts found.</p>
-                                    ) : (
-                                        loginUsersList.filter(u => 
-                                            u.username?.toLowerCase().includes(loginUsersSearch.toLowerCase()) || 
-                                            u.email?.toLowerCase().includes(loginUsersSearch.toLowerCase()) || 
-                                            u.full_name?.toLowerCase().includes(loginUsersSearch.toLowerCase())
-                                        ).map(item => (
-                                            <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: themeStyles.rowBg, border: themeStyles.rowBorder, borderRadius: '8px' }}>
-                                                <div>
-                                                    <span style={{ fontWeight: '800', fontSize: '0.82rem', color: themeStyles.textMain }}>{item.full_name} ({item.username})</span>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-                                                        <span style={{ fontSize: '0.68rem', color: themeStyles.textMuted }}>{item.email}</span>
-                                                        <span style={{ fontSize: '0.65rem', fontWeight: '800', background: item.role === 'admin' ? 'rgba(239, 68, 68, 0.1)' : item.role === 'client' ? 'rgba(37, 99, 235, 0.1)' : 'rgba(16, 185, 129, 0.1)', color: item.role === 'admin' ? '#ef4444' : item.role === 'client' ? '#2563eb' : '#10b981', padding: '1px 6px', borderRadius: '4px' }}>
-                                                            {item.role}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    onClick={() => handleDeleteLoginUser(item.id)}
-                                                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
-                                                >
-                                                    <Trash2 size={13} />
-                                                </button>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Top: 2 column side-by-side forms */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '2rem' }}>
-                            
-                            {/* Specialist Privilege Scope Allocator */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', marginBottom: '1.25rem', color: '#ffaa00' }}>Allocate Specialist Privilege Scope</h3>
-                                <form onSubmit={handleAssignPermission} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Operator Email</label>
-                                        <input
-                                            type="email"
-                                            placeholder="e.g. specialist@geopits.com"
-                                            value={permEmail}
-                                            onChange={e => setPermEmail(e.target.value)}
-                                            required
-                                            style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                        />
-                                    </div>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Technology Scope</label>
-                                            <input
-                                                type="text"
-                                                placeholder="e.g. MySQL, Postgres"
-                                                value={permTech}
-                                                onChange={e => setPermTech(e.target.value)}
-                                                required
-                                                style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                            />
-                                        </div>
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Account Status</label>
-                                            <select
-                                                value={permStatus}
-                                                onChange={e => setPermStatus(e.target.value)}
-                                                style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                            >
-                                                <option value="Active">Active</option>
-                                                <option value="Revoked">Revoked</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Privilege Level</label>
-                                        <select
-                                            value={permRole}
-                                            onChange={e => {
-                                                const val = e.target.value;
-                                                setPermRole(val);
-                                                setPermIsLead(val === 'lead');
-                                            }}
-                                            style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                        >
-                                            <option value="user">Standard Specialist</option>
-                                            <option value="lead">Technology Lead</option>
-                                            <option value="admin">System Administrator</option>
-                                        </select>
-                                    </div>
-                                    <button
-                                        type="submit"
-                                        style={{ padding: '12px', background: '#ffaa00', color: '#000000', border: 'none', borderRadius: '8px', fontWeight: '800', fontSize: '0.85rem', cursor: 'pointer', marginTop: '6px' }}
-                                    >
-                                        Assign Privilege Scope
-                                    </button>
-                                </form>
-                            </div>
-
-                            {/* Specialist Active Duty Directory */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                                <div>
-                                    <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', margin: 0 }}>Active Duty Directory</h3>
-                                    <p style={{ fontSize: '0.72rem', color: themeStyles.textMuted, margin: '2px 0 0 0' }}>Register active duty engineers dynamically for operations.</p>
-                                </div>
-
-                                <form onSubmit={handleCreateOnlineUser} style={{ display: 'flex', gap: '8px' }}>
-                                    <input
-                                        type="text"
-                                        placeholder="Specialist Name (e.g. Kalai)..."
-                                        value={newOnlineUsername}
-                                        onChange={e => setNewOnlineUsername(e.target.value)}
-                                        required
-                                        style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                    />
-                                    <input
-                                        type="text"
-                                        placeholder="Tech (e.g. MySQL)..."
-                                        value={newOnlineUnits}
-                                        onChange={e => setNewOnlineUnits(e.target.value)}
-                                        required
-                                        style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                    />
-                                    <button
-                                        type="submit"
-                                        style={{ padding: '10px 16px', background: '#ffaa00', color: '#000000', border: 'none', borderRadius: '8px', fontWeight: '800', fontSize: '0.82rem', cursor: 'pointer' }}
-                                    >
-                                        Register
-                                    </button>
-                                </form>
-
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
-                                    {onlineUsersList.length === 0 ? (
-                                        <p style={{ fontSize: '0.82rem', color: themeStyles.textMuted, textAlign: 'center', padding: '1.5rem' }}>No active duty specialists recorded.</p>
-                                    ) : (
-                                        onlineUsersList.map(item => (
-                                            <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: themeStyles.rowBg, border: themeStyles.rowBorder, borderRadius: '8px' }}>
-                                                <div>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }}></div>
-                                                        <span style={{ fontWeight: '800', fontSize: '0.82rem', color: themeStyles.textMain }}>{item.username}</span>
-                                                    </div>
-                                                    <span style={{ fontSize: '0.68rem', color: themeStyles.textMuted, display: 'block', marginTop: '2px' }}>Scope: {item.units}</span>
-                                                </div>
-                                                <button
-                                                    onClick={() => handleDeleteOnlineUser(item.id)}
-                                                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
-                                                >
-                                                    <Trash2 size={13} />
-                                                </button>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Bottom: Privilege scopes registry list table */}
-                        <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem', marginTop: '1rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '10px' }}>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', margin: 0 }}>Active Privilege Registry</h3>
-                                <input
-                                    type="text"
-                                    placeholder="Search scopes..."
-                                    value={permissionsSearch}
-                                    onChange={e => setPermissionsSearch(e.target.value)}
-                                    style={{ padding: '8px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.78rem', outline: 'none', width: '240px' }}
-                                />
-                            </div>
-
+                        {/* Company Clients Directory */}
+                        <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
+                            <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', marginBottom: '1.25rem' }}>Registered Company Clients Directory</h3>
                             <div style={{ overflowX: 'auto' }}>
                                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
                                     <thead>
                                         <tr style={{ borderBottom: themeStyles.rowBorder, color: themeStyles.textMuted }}>
-                                            <th style={{ padding: '12px' }}>Email Address</th>
-                                            <th style={{ padding: '12px' }}>Scope Stack</th>
-                                            <th style={{ padding: '12px' }}>Role Level</th>
-                                            <th style={{ padding: '12px' }}>Status Gate</th>
-                                            <th style={{ padding: '12px', textAlign: 'center' }}>Actions</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Company Name</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Technologies</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Email Contact</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Phone</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800', textAlign: 'center' }}>Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {filteredPermissions.length === 0 ? (
+                                        {clientsList.length === 0 ? (
                                             <tr>
-                                                <td colSpan="5" style={{ padding: '2rem', textAlign: 'center', color: themeStyles.textMuted }}>No privilege scopes configured.</td>
+                                                <td colSpan="5" style={{ padding: '2rem', textAlign: 'center', color: themeStyles.textMuted }}>No company clients registered.</td>
                                             </tr>
                                         ) : (
-                                            filteredPermissions.map(item => (
-                                                <tr key={item.id} style={{ borderBottom: themeStyles.rowBorder }}>
-                                                    <td style={{ padding: '12px', fontWeight: '700' }}>{item.email}</td>
-                                                    <td style={{ padding: '12px' }}>
-                                                        {item.technology.split(',').map((tech, idx) => (
-                                                            <span key={idx} style={{ fontSize: '0.65rem', fontWeight: '800', background: 'rgba(255, 170, 0, 0.1)', color: '#ffaa00', padding: '2px 6px', borderRadius: '4px', marginRight: '5px' }}>
+                                            clientsList.map(client => (
+                                                <tr key={client.id} style={{ borderBottom: themeStyles.rowBorder }}>
+                                                    <td style={{ padding: '14px 16px', fontWeight: '700', color: themeStyles.textMain }}>{client.client_name}</td>
+                                                    <td style={{ padding: '14px 16px' }}>
+                                                        {client.db_type?.split(',').map((tech, idx) => (
+                                                            <span key={idx} style={{ fontSize: '0.65rem', fontWeight: '800', background: 'rgba(56, 189, 248, 0.1)', color: '#38bdf8', padding: '2px 6px', borderRadius: '4px', marginRight: '5px' }}>
                                                                 {tech.trim()}
                                                             </span>
                                                         ))}
                                                     </td>
-                                                    <td style={{ padding: '12px', textTransform: 'capitalize' }}>{item.role || (item.is_lead ? 'lead' : 'user')}</td>
-                                                    <td style={{ padding: '12px' }}>
-                                                        <span style={{
-                                                            fontSize: '0.72rem',
-                                                            fontWeight: '800',
-                                                            color: item.status === 'Active' ? '#10b981' : '#ef4444',
-                                                            background: item.status === 'Active' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                                                            padding: '3px 8px',
-                                                            borderRadius: '6px'
-                                                        }}>{item.status}</span>
-                                                    </td>
-                                                    <td style={{ padding: '12px', textAlign: 'center' }}>
+                                                    <td style={{ padding: '14px 16px', color: themeStyles.textMain }}>{client.client_email || 'N/A'}</td>
+                                                    <td style={{ padding: '14px 16px', color: themeStyles.textMuted }}>{client.phone_number || 'N/A'}</td>
+                                                    <td style={{ padding: '14px 16px', textAlign: 'center' }}>
                                                         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                                                             <button
-                                                                onClick={() => handleTogglePermissionStatus(item.id)}
-                                                                style={{
-                                                                    padding: '4px 8px',
-                                                                    background: 'none',
-                                                                    border: themeStyles.inputBorder,
-                                                                    color: themeStyles.textMain,
-                                                                    borderRadius: '6px',
-                                                                    cursor: 'pointer',
-                                                                    fontSize: '0.7rem',
-                                                                    fontWeight: '700'
-                                                                }}
+                                                                onClick={() => handleEditClientClick(client)}
+                                                                style={{ padding: '4px 8px', background: 'none', border: themeStyles.inputBorder, color: themeStyles.textMain, borderRadius: '6px', cursor: 'pointer', fontSize: '0.7rem', fontWeight: '700' }}
                                                             >
-                                                                Toggle
+                                                                Edit
                                                             </button>
                                                             <button
-                                                                onClick={() => handleDeletePermission(item.id)}
+                                                                onClick={() => handleDeleteClient(client.id)}
                                                                 style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
                                                             >
                                                                 <Trash2 size={14} />
@@ -2721,586 +2380,167 @@ const AdminSetup = () => {
                             </div>
                         </div>
 
-                        {/* Granular Client Permissions Mapping Center */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '2rem', marginTop: '2rem' }}>
-                            {/* Client Access Allocator Form */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', marginBottom: '0.5rem', color: '#ffaa00' }}>Allocate Client View PermissionsCenter</h3>
-                                <p style={{ fontSize: '0.75rem', color: themeStyles.textMuted, marginBottom: '1.25rem' }}>Map specific operators to client databases. They will only be permitted to view logs, metrics, and telemetry for these client environments.</p>
-                                
-                                <form onSubmit={handleAssignUserClient} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Operator Email</label>
-                                        <input
-                                            type="email"
-                                            placeholder="e.g. specialist@geopits.com"
-                                            value={ucEmail}
-                                            onChange={e => setUcEmail(e.target.value)}
-                                            required
-                                            style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                        />
-                                    </div>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Client Environment</label>
-                                            <select
-                                                value={ucClientName}
-                                                onChange={e => setUcClientName(e.target.value)}
-                                                required
-                                                style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                            >
-                                                <option value="">-- Select Client --</option>
-                                                {clientsList.map(c => (
-                                                    <option key={c.id} value={c.client_name}>{c.client_name} ({c.db_type})</option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '750', color: themeStyles.textMuted, marginBottom: '6px' }}>Access Scope</label>
-                                            <select
-                                                value={ucAccessLevel}
-                                                onChange={e => setUcAccessLevel(e.target.value)}
-                                                style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                            >
-                                                <option value="view">Read Only View</option>
-                                                <option value="write">Read & Write</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <button
-                                        type="submit"
-                                        style={{ padding: '12px', background: '#ffaa00', color: '#000000', border: 'none', borderRadius: '8px', fontWeight: '800', fontSize: '0.85rem', cursor: 'pointer', marginTop: '6px' }}
-                                    >
-                                        Grant Client Access Permission
-                                    </button>
-                                </form>
+                        {/* Client-Database Access Mappings (Oversight Center) */}
+                        <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div>
+                                    <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', margin: 0 }}>Client-Database Environment Routing</h3>
+                                    <p style={{ fontSize: '0.72rem', color: themeStyles.textMuted, margin: '2px 0 0 0' }}>Map client emails to database technologies, companies, and servers.</p>
+                                </div>
                             </div>
 
-                            {/* Client Access Registry Grid */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                                <div>
-                                    <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', margin: 0 }}>Client Visibility Matrix</h3>
-                                    <p style={{ fontSize: '0.72rem', color: themeStyles.textMuted, margin: '2px 0 0 0' }}>Active granular email-to-client environment map listings.</p>
+                            {/* Assign Mappings Form */}
+                            <form onSubmit={handleAddClientAccess} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', background: themeStyles.rowBg, padding: '1.25rem', borderRadius: '10px', border: themeStyles.rowBorder }}>
+                                <div style={{ flex: '1 1 200px' }}>
+                                    <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Client Email</label>
+                                    <input 
+                                        type="email" 
+                                        required 
+                                        placeholder="e.g. client@corp.com" 
+                                        value={mapClientEmail}
+                                        onChange={e => setMapClientEmail(e.target.value)}
+                                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.8rem', outline: 'none' }}
+                                    />
                                 </div>
+                                <div style={{ flex: '1 1 150px' }}>
+                                    <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Technology</label>
+                                    <select 
+                                        required 
+                                        value={mapClientTech}
+                                        onChange={e => {
+                                            setMapClientTech(e.target.value);
+                                            setMapClientName('');
+                                            setMapClientServer('');
+                                        }}
+                                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.8rem', outline: 'none' }}
+                                    >
+                                        <option value="">Select Tech</option>
+                                        {clientFilters.db_types?.map(t => <option key={t} value={t}>{t}</option>)}
+                                    </select>
+                                </div>
+                                <div style={{ flex: '1 1 150px' }}>
+                                    <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Client Name</label>
+                                    <select 
+                                        required 
+                                        value={mapClientName}
+                                        onChange={e => setMapClientName(e.target.value)}
+                                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.8rem', outline: 'none' }}
+                                    >
+                                        <option value="">Select Client</option>
+                                        {mappedClientOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                </div>
+                                <div style={{ flex: '1 1 150px' }}>
+                                    <label style={{ display: 'block', fontSize: '0.68rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Server/Ip</label>
+                                    <select 
+                                        required 
+                                        value={mapClientServer}
+                                        onChange={e => setMapClientServer(e.target.value)}
+                                        style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.8rem', outline: 'none' }}
+                                    >
+                                        <option value="">Select Server</option>
+                                        {mappedServerOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                </div>
+                                <button 
+                                    type="submit" 
+                                    style={{ padding: '10px 20px', background: '#ffaa00', color: '#000', border: 'none', borderRadius: '8px', fontWeight: '800', fontSize: '0.82rem', cursor: 'pointer', boxShadow: '0 2px 4px rgba(255,170,0,0.2)' }}
+                                >
+                                    Assign Routing
+                                </button>
+                            </form>
 
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '250px', overflowY: 'auto' }}>
-                                    {userClientsList.length === 0 ? (
-                                        <p style={{ fontSize: '0.82rem', color: themeStyles.textMuted, textAlign: 'center', padding: '1.5rem' }}>No client visibility maps assigned.</p>
-                                    ) : (
-                                        userClientsList.map(item => (
-                                            <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: themeStyles.rowBg, border: themeStyles.rowBorder, borderRadius: '8px' }}>
-                                                <div>
-                                                    <span style={{ fontWeight: '800', fontSize: '0.82rem', color: themeStyles.textMain, display: 'block' }}>{item.email}</span>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
-                                                        <span style={{ fontSize: '0.68rem', fontWeight: '800', background: 'rgba(37, 99, 235, 0.1)', color: '#2563eb', padding: '1px 6px', borderRadius: '4px' }}>{item.client_name}</span>
-                                                        <span style={{ fontSize: '0.65rem', color: themeStyles.textMuted }}>Scope: {item.access_level}</span>
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    onClick={() => handleDeleteUserClient(item.id)}
-                                                    style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
-                                                >
-                                                    <Trash2 size={13} />
-                                                </button>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
+                            {/* Mappings List */}
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: themeStyles.rowBorder, color: themeStyles.textMuted }}>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Client Email</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Technology</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Client Name</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Server/Ip</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800' }}>Status</th>
+                                            <th style={{ padding: '12px 16px', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: '800', textAlign: 'center' }}>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {clientAccessLoading ? (
+                                            <tr>
+                                                <td colSpan="6" style={{ padding: '2rem', textAlign: 'center', color: themeStyles.textMuted }}>Loading access mappings...</td>
+                                            </tr>
+                                        ) : clientAccessList.length === 0 ? (
+                                            <tr>
+                                                <td colSpan="6" style={{ padding: '2rem', textAlign: 'center', color: themeStyles.textMuted }}>No client access mappings found.</td>
+                                            </tr>
+                                        ) : (
+                                            clientAccessList.map(item => (
+                                                <tr key={item.id} style={{ borderBottom: themeStyles.rowBorder }}>
+                                                    <td style={{ padding: '14px 16px', fontWeight: '700', color: themeStyles.textMain }}>{item.client_email}</td>
+                                                    <td style={{ padding: '14px 16px' }}>
+                                                        <span style={{ fontSize: '0.65rem', fontWeight: '800', background: 'rgba(255, 170, 0, 0.1)', color: '#ffaa00', padding: '2px 6px', borderRadius: '4px' }}>
+                                                            {item.technology}
+                                                        </span>
+                                                    </td>
+                                                    <td style={{ padding: '14px 16px', color: themeStyles.textMain, fontWeight: '600' }}>{item.client_name}</td>
+                                                    <td style={{ padding: '14px 16px', color: themeStyles.textMuted }}>{item.server_name}</td>
+                                                    <td style={{ padding: '14px 16px' }}>
+                                                        <span style={{
+                                                            fontSize: '0.72rem',
+                                                            fontWeight: '800',
+                                                            color: item.status === 'enabled' ? '#10b981' : '#ef4444',
+                                                            background: item.status === 'enabled' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                                            padding: '3px 8px',
+                                                            borderRadius: '6px'
+                                                        }}>{item.status}</span>
+                                                    </td>
+                                                    <td style={{ padding: '14px 16px', textAlign: 'center' }}>
+                                                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                                                            <button 
+                                                                onClick={() => handleToggleClientAccessStatus(item)}
+                                                                style={{ padding: '4px 8px', background: 'none', border: themeStyles.inputBorder, color: themeStyles.textMain, borderRadius: '6px', cursor: 'pointer', fontSize: '0.7rem', fontWeight: '700', transition: 'all 0.2s' }}
+                                                                onMouseEnter={(e) => { e.currentTarget.style.background = isLight ? '#f1f5f9' : 'rgba(255,255,255,0.05)'; }}
+                                                                onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
+                                                            >
+                                                                Toggle
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => handleDeleteClientAccess(item)}
+                                                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', borderRadius: '4px', transition: 'all 0.2s' }}
+                                                                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
+                                                                onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; }}
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
+
                     </div>
                 )}
+
 
                 {/* ======================================================================== */}
                 {/* TAB 4: SECURE FIREWALL & API ACCESS CONTROL CENTER */}
                 {/* ======================================================================== */}
-                {activeTab === 'network-firewall' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                        <div>
-                            <h1 style={{ fontSize: '1.8rem', fontWeight: '800', margin: 0, color: themeStyles.textMain, letterSpacing: '-0.5px' }}>Secure Network IP Firewall</h1>
-                            <p style={{ fontSize: '0.85rem', color: themeStyles.textMuted, margin: '6px 0 0 0' }}>Manage allowed administrative office IP networks and test client access compliance.</p>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '2rem' }}>
-                            
-                            {/* Whitelisted subnet list */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', marginBottom: '1.25rem', color: '#ffaa00' }}>Whitelisted Corporate CIDR Networks</h3>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '250px', overflowY: 'auto', marginBottom: '1.5rem' }}>
-                                    {whitelistedIPs.map((item, idx) => (
-                                        <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: themeStyles.rowBg, border: themeStyles.rowBorder, borderRadius: '10px' }}>
-                                            <div>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                    <Terminal size={12} style={{ color: '#10b981' }} />
-                                                    <code style={{ fontSize: '0.82rem', fontWeight: '800', color: themeStyles.textMain }}>{item.cidr}</code>
-                                                    <span style={{ fontSize: '0.58rem', background: 'rgba(16, 185, 129, 0.15)', color: '#10b981', padding: '1px 5px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: '800' }}>Active Gate</span>
-                                                </div>
-                                                <span style={{ fontSize: '0.7rem', color: themeStyles.textMuted, marginTop: '2px', display: 'block' }}>{item.description}</span>
-                                            </div>
-                                            <button 
-                                                onClick={() => handleRemoveCidr(item.cidr)}
-                                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '6px', display: 'flex' }}
-                                                title="Revoke Network Range"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                {/* Add CIDR Form */}
-                                <form onSubmit={handleRegisterCidr} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                    <div style={{ display: 'flex', gap: '10px' }}>
-                                        <input
-                                            type="text"
-                                            placeholder="Subnet CIDR (e.g. 172.16.0.0/12)"
-                                            value={newCidr}
-                                            onChange={e => setNewCidr(e.target.value)}
-                                            required
-                                            style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                        />
-                                        <button 
-                                            type="submit"
-                                            style={{ padding: '10px 16px', background: '#ffaa00', color: '#000000', border: 'none', borderRadius: '8px', fontWeight: '800', fontSize: '0.82rem', cursor: 'pointer' }}
-                                        >
-                                            Add CIDR
-                                        </button>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        placeholder="Description (e.g. Office Chennai LAN)..."
-                                        value={newCidrDesc}
-                                        onChange={e => setNewCidrDesc(e.target.value)}
-                                        style={{ padding: '10px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                    />
-                                </form>
-                            </div>
-
-                            {/* Validate IP compliance test */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', marginBottom: '1.25rem', color: '#ffaa00' }}>Client IP Access Compliance Tester</h3>
-                                <form onSubmit={handleValidateClientIp} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                    <p style={{ fontSize: '0.78rem', color: themeStyles.textMuted, margin: 0 }}>
-                                        Input an external client IP address to check if it matches the registered CIDR whitelist criteria.
-                                    </p>
-                                    <div style={{ display: 'flex', gap: '10px' }}>
-                                        <input
-                                            type="text"
-                                            placeholder="Client IP (e.g. 172.16.42.1)"
-                                            value={ipToTest}
-                                            onChange={e => setIpToTest(e.target.value)}
-                                            required
-                                            style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.82rem', outline: 'none' }}
-                                        />
-                                        <button 
-                                            type="submit"
-                                            style={{ padding: '10px 16px', background: '#ffaa00', color: '#000000', border: 'none', borderRadius: '8px', fontWeight: '800', fontSize: '0.82rem', cursor: 'pointer' }}
-                                        >
-                                            Test Compliance
-                                        </button>
-                                    </div>
-                                </form>
-
-                                {testResult && (
-                                    <div style={{
-                                        marginTop: '1.5rem',
-                                        padding: '12px 16px',
-                                        borderRadius: '8px',
-                                        fontSize: '0.8rem',
-                                        fontWeight: '700',
-                                        background: testResult.status === 'success' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                                        border: testResult.status === 'success' ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)',
-                                        color: testResult.status === 'success' ? '#10b981' : '#ef4444'
-                                    }}>
-                                        {testResult.message}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
+                
 
                 {/* ======================================================================== */}
                 {/* TAB 5: SLA ALERTS BROADCAST CENTER & TECH MATRIX */}
                 {/* ======================================================================== */}
-                {activeTab === 'broadcast-alerts' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                        <div>
-                            <h1 style={{ fontSize: '1.8rem', fontWeight: '800', margin: 0, color: themeStyles.textMain, letterSpacing: '-0.5px' }}>SLA Alerts Broadcast Center</h1>
-                            <p style={{ fontSize: '0.85rem', color: themeStyles.textMuted, margin: '6px 0 0 0' }}>Push urgent real-time system alerts to all users and monitor environment counts.</p>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '2rem' }}>
-                            
-                            {/* Broadcast Console */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', marginBottom: '1.25rem', color: '#ffaa00' }}>Real-Time SLA Broadcast Console</h3>
-                                <form onSubmit={handleBroadcastAlert} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                                    <textarea
-                                        placeholder="Type critical system alert warning (e.g. Postgres replication lag exceeds SLA policy)..."
-                                        value={broadcastMessage}
-                                        onChange={(e) => setBroadcastMessage(e.target.value)}
-                                        rows={4}
-                                        required
-                                        style={{ width: '100%', padding: '12px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.85rem', outline: 'none', resize: 'none' }}
-                                    />
-                                    <button 
-                                        type="submit"
-                                        disabled={isLoading}
-                                        style={{ padding: '12px', background: 'linear-gradient(135deg, #ef4444, #dc2626)', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '800', fontSize: '0.85rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                                    >
-                                        <Megaphone size={16} />
-                                        <span>Broadcast Global Alert</span>
-                                    </button>
-                                </form>
-                            </div>
-
-                            {/* Technology Environment Matrix */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', marginBottom: '1.25rem', color: '#ffaa00' }}>Active Technology Environment Matrix</h3>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                    {[
-                                        { label: 'MySQL', count: mysqlCount, color: '#f59e0b' },
-                                        { label: 'PostgreSQL', count: pgCount, color: '#3b82f6' },
-                                        { label: 'MongoDB', count: mongoCount, color: '#10b981' },
-                                        { label: 'Oracle', count: oracleCount, color: '#ef4444' },
-                                        { label: 'MSSQL', count: mssqlCount, color: '#8b5cf6' }
-                                    ].map(tech => {
-                                        const percent = totalDbs > 0 ? (tech.count / totalDbs) * 100 : 0;
-                                        return (
-                                            <div key={tech.label} style={{ fontSize: '0.78rem' }}>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                                    <span style={{ fontWeight: '700', color: themeStyles.textMain }}>{tech.label}</span>
-                                                    <span style={{ fontWeight: '800', color: tech.color }}>{tech.count} active nodes</span>
-                                                </div>
-                                                <div style={{ background: isLight ? '#e2e8f0' : 'rgba(255,255,255,0.05)', height: '6px', borderRadius: '3px', overflow: 'hidden' }}>
-                                                    <div style={{ background: tech.color, width: `${percent}%`, height: '100%', borderRadius: '3px', transition: 'width 0.5s ease' }}></div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                
 
                 {/* ======================================================================== */}
                 {/* TAB 6: TELEMETRY ACTIVITY AUDITS & DATABASE MAINTENANCE SUITE */}
                 {/* ======================================================================== */}
-                {activeTab === 'telemetry-audits' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                        <div>
-                            <h1 style={{ fontSize: '1.8rem', fontWeight: '800', margin: 0, color: themeStyles.textMain, letterSpacing: '-0.5px' }}>Telemetry Audits & DB Maintenance</h1>
-                            <p style={{ fontSize: '0.85rem', color: themeStyles.textMuted, margin: '6px 0 0 0' }}>Review active sessions telemetry, customer feedback history, and apply target maintenance purges.</p>
-                        </div>
+                
 
-                        {/* Side-by-Side: Specialist Logs vs. DB Maintenance Console */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '2rem' }}>
-                            
-                            {/* Specialist Session Activity Logs */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '10px' }}>
-                                    <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', margin: 0 }}>Specialist Session Activity</h3>
-                                    <input
-                                        type="text"
-                                        placeholder="Search logs..."
-                                        value={telemetrySearch}
-                                        onChange={e => setTelemetrySearch(e.target.value)}
-                                        style={{ padding: '8px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.78rem', outline: 'none', width: '180px' }}
-                                    />
-                                </div>
-
-                                <div style={{ overflowX: 'auto', maxHeight: '350px', overflowY: 'auto' }}>
-                                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
-                                        <thead>
-                                            <tr style={{ borderBottom: themeStyles.rowBorder, color: themeStyles.textMuted }}>
-                                                <th style={{ padding: '10px' }}>User</th>
-                                                <th style={{ padding: '10px' }}>Page</th>
-                                                <th style={{ padding: '10px' }}>Duration</th>
-                                                <th style={{ padding: '10px' }}>Last Login</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {filteredTelemetry.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan="4" style={{ padding: '2rem', textAlign: 'center', color: themeStyles.textMuted }}>No logs recorded.</td>
-                                                </tr>
-                                            ) : (
-                                                filteredTelemetry.map(item => (
-                                                    <tr key={item.id} style={{ borderBottom: themeStyles.rowBorder }}>
-                                                        <td style={{ padding: '10px', fontWeight: '700' }}>{item.username}</td>
-                                                        <td style={{ padding: '10px' }}>
-                                                            <code style={{ background: 'rgba(255,255,255,0.02)', padding: '2px 6px', borderRadius: '4px', border: themeStyles.inputBorder, color: '#3b82f6', fontSize: '0.7rem' }}>
-                                                                {item.page_path}
-                                                            </code>
-                                                        </td>
-                                                        <td style={{ padding: '10px', fontWeight: '800' }}>{formatDuration(item.duration_seconds)}</td>
-                                                        <td style={{ padding: '10px', color: themeStyles.textMuted }}>
-                                                            {item.last_active_at ? new Date(item.last_active_at).toLocaleString() : 'Never'}
-                                                        </td>
-                                                    </tr>
-                                                ))
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-
-                            {/* TRANSIENT DATABASE MAINTENANCE SUITE - PRESERVING ALL ORIGINAL PURGE CRITERIA! */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                                <div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem' }}>
-                                        <span style={{ fontSize: '1.25rem' }}>🗄️</span>
-                                        <h3 style={{ fontSize: '1.1rem', fontWeight: '800', margin: 0, color: '#ffaa00' }}>Transient Database Maintenance Suite</h3>
-                                    </div>
-                                    <p style={{ fontSize: '0.82rem', color: themeStyles.textMuted, lineHeight: '1.5', margin: '0 0 1.5rem 0' }}>
-                                        Perform dynamic targeted purges or complete transactional resets directly on the PostgreSQL database instances. Access is highly restricted and requires authorization.
-                                    </p>
-
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '1.5rem' }}>
-                                        <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '6px', textTransform: 'uppercase' }}>Select Purge Target Table</label>
-                                            <select
-                                                value={selectedClearTarget}
-                                                onChange={e => setSelectedClearTarget(e.target.value)}
-                                                style={{ width: '100%', padding: '11px 14px', borderRadius: '8px', background: themeStyles.inputBg, border: themeStyles.inputBorder, color: themeStyles.textMain, fontSize: '0.85rem', outline: 'none' }}
-                                            >
-                                                <option value="feedbacks">Purge Feedback Reviews (feedbacks)</option>
-                                                <option value="telemetry">Purge Page Activity Logs (user_page_activity)</option>
-                                                <option value="notifications">Purge SLA Warnings & Broadcast Alerts (notifications)</option>
-                                                <option value="reports">Purge Client Reports Vault (client_reports)</option>
-                                                <option value="all">Complete Transient Database Reset (all tables)</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <button
-                                    onClick={() => setShowMaintenanceModal(true)}
-                                    disabled={isLoading}
-                                    style={{
-                                        width: '100%',
-                                        padding: '12px',
-                                        background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
-                                        color: '#ffffff',
-                                        border: 'none',
-                                        borderRadius: '8px',
-                                        fontWeight: '800',
-                                        fontSize: '0.85rem',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: '8px',
-                                        boxShadow: '0 4px 12px rgba(239, 68, 68, 0.2)'
-                                    }}
-                                >
-                                    <Settings size={15} />
-                                    <span>Execute Targeted Database Purge</span>
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Bottom: Feedbacks logs */}
-                        <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', margin: 0 }}>Recorded User Feedbacks ({feedbacks.length})</h3>
-                            </div>
-
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                                {feedbacks.length === 0 ? (
-                                    <p style={{ fontSize: '0.82rem', color: themeStyles.textMuted, textAlign: 'center', padding: '2rem' }}>No user feedbacks collected.</p>
-                                ) : (
-                                    feedbacks.map(item => (
-                                        <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', padding: '14px 18px', background: themeStyles.rowBg, border: themeStyles.rowBorder, borderRadius: '10px' }}>
-                                            <div>
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                                    <span style={{ fontWeight: '800', fontSize: '0.85rem', color: themeStyles.textMain }}>
-                                                        {item.username || 'Anonymous'} <span style={{ fontWeight: '400', color: themeStyles.textMuted, fontSize: '0.78rem' }}>({item.email || 'no-email'})</span>
-                                                    </span>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', marginTop: '2px' }}>
-                                                        {[1, 2, 3, 4, 5].map(star => (
-                                                            <Star 
-                                                                key={star} 
-                                                                size={12} 
-                                                                style={{ 
-                                                                    fill: star <= (item.rating || 0) ? '#ffaa00' : 'none', 
-                                                                    color: star <= (item.rating || 0) ? '#ffaa00' : themeStyles.textMuted 
-                                                                }} 
-                                                            />
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                                <p style={{ fontSize: '0.82rem', color: themeStyles.textMain, margin: '8px 0 0 0', lineHeight: '1.4' }}>{item.feedback_text}</p>
-                                                <span style={{ fontSize: '0.65rem', color: themeStyles.textMuted, display: 'block', marginTop: '6px' }}>Submitted: {new Date(item.created_at).toLocaleString()}</span>
-                                            </div>
-                                            <button 
-                                                onClick={() => handleDeleteFeedback(item.id)}
-                                                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px' }}
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {activeTab === 'telemetry-scheduler' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                        <div>
-                            <h1 style={{ fontSize: '1.8rem', fontWeight: '800', margin: 0, color: themeStyles.textMain, letterSpacing: '-0.5px' }}>Telemetry Ingestion Scheduler</h1>
-                            <p style={{ fontSize: '0.85rem', color: themeStyles.textMuted, margin: '6px 0 0 0' }}>Configure automated daily database capacity audits, telemetry metrics pulling, or execute manual ingestion.</p>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '2rem' }}>
-                            {/* Scheduler Status Panel */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '320px' }}>
-                                <div>
-                                    <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', margin: '0 0 1.5rem 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                        <Activity size={18} /> Daemon Status & Heartbeat
-                                    </h3>
-                                    
-                                    {schedulerStatus ? (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                                            <div style={{ fontSize: '0.9rem', color: themeStyles.textMain }}>
-                                                Daemon Status: <strong style={{ color: schedulerStatus.sync_in_progress ? '#ffaa00' : '#34d399', textTransform: 'uppercase', fontSize: '0.85rem' }}>{schedulerStatus.status}</strong>
-                                            </div>
-                                            <div style={{ fontSize: '0.9rem', color: themeStyles.textMain }}>
-                                                Scheduled Time: <strong>{String(schedulerStatus.trigger_hour).padStart(2, '0')}:{String(schedulerStatus.trigger_minute).padStart(2, '0')} IST</strong> Daily
-                                            </div>
-                                            <div style={{ borderTop: themeStyles.rowBorder, paddingTop: '15px' }}>
-                                                <h4 style={{ margin: '0 0 8px 0', fontSize: '0.8rem', textTransform: 'uppercase', color: themeStyles.textMuted }}>Last Run Report</h4>
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.82rem' }}>
-                                                    <div>Timestamp: <span style={{ fontWeight: 600 }}>{schedulerStatus.last_sync_time}</span></div>
-                                                    <div>Status: <span style={{ 
-                                                        fontWeight: 600,
-                                                        color: schedulerStatus.last_sync_status?.startsWith('Success') ? '#34d399' : (schedulerStatus.last_sync_status === 'N/A' ? themeStyles.textMuted : '#ef4444')
-                                                    }}>{schedulerStatus.last_sync_status}</span></div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <p style={{ color: themeStyles.textMuted, fontSize: '0.85rem' }}>Querying daemon heartbeat...</p>
-                                    )}
-                                </div>
-
-                                <button
-                                    onClick={handleTriggerSync}
-                                    disabled={schedulerStatus?.sync_in_progress || triggeringSync}
-                                    style={{
-                                        marginTop: '2rem',
-                                        width: '100%',
-                                        padding: '12px',
-                                        background: schedulerStatus?.sync_in_progress || triggeringSync ? 'rgba(255,255,255,0.05)' : 'linear-gradient(135deg, #ffaa00, #d97706)',
-                                        color: schedulerStatus?.sync_in_progress || triggeringSync ? themeStyles.textMuted : '#000000',
-                                        border: 'none',
-                                        borderRadius: '8px',
-                                        fontWeight: '800',
-                                        fontSize: '0.85rem',
-                                        cursor: schedulerStatus?.sync_in_progress || triggeringSync ? 'not-allowed' : 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: '8px',
-                                        boxShadow: schedulerStatus?.sync_in_progress || triggeringSync ? 'none' : '0 4px 12px rgba(255,170,0,0.2)',
-                                        transition: 'all 0.2s'
-                                    }}
-                                >
-                                    <RefreshCw size={15} className={schedulerStatus?.sync_in_progress || triggeringSync ? "spin-sync-icon" : ""} />
-                                    <span>{schedulerStatus?.sync_in_progress ? 'Ingestion In Progress...' : 'Sync Telemetry Now'}</span>
-                                </button>
-                            </div>
-
-                            {/* Scheduler Configuration Form */}
-                            <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '2rem', minHeight: '320px' }}>
-                                <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#ffaa00', margin: '0 0 1.5rem 0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <Settings size={18} /> Schedule Settings
-                                </h3>
-
-                                <form onSubmit={handleUpdateSchedulerSettings} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                    <div style={{ display: 'flex', gap: '1.5rem' }}>
-                                        <div style={{ flex: 1 }}>
-                                            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '8px', textTransform: 'uppercase' }}>
-                                                Trigger Hour (0 - 23)
-                                            </label>
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                max="23"
-                                                required
-                                                value={triggerHour}
-                                                onChange={e => setTriggerHour(Math.max(0, Math.min(23, parseInt(e.target.value) || 0)))}
-                                                style={{
-                                                    width: '100%',
-                                                    padding: '12px 14px',
-                                                    borderRadius: '8px',
-                                                    background: themeStyles.inputBg,
-                                                    border: themeStyles.inputBorder,
-                                                    color: themeStyles.textMain,
-                                                    fontSize: '0.9rem',
-                                                    fontWeight: '700',
-                                                    outline: 'none'
-                                                }}
-                                            />
-                                        </div>
-
-                                        <div style={{ flex: 1 }}>
-                                            <label style={{ display: 'block', fontSize: '0.72rem', fontWeight: '800', color: themeStyles.textMuted, marginBottom: '8px', textTransform: 'uppercase' }}>
-                                                Trigger Minute (0 - 59)
-                                            </label>
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                max="59"
-                                                required
-                                                value={triggerMinute}
-                                                onChange={e => setTriggerMinute(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
-                                                style={{
-                                                    width: '100%',
-                                                    padding: '12px 14px',
-                                                    borderRadius: '8px',
-                                                    background: themeStyles.inputBg,
-                                                    border: themeStyles.inputBorder,
-                                                    color: themeStyles.textMain,
-                                                    fontSize: '0.9rem',
-                                                    fontWeight: '700',
-                                                    outline: 'none'
-                                                }}
-                                            />
-                                        </div>
-                                    </div>
-
-                                    <div style={{ fontSize: '0.75rem', color: themeStyles.textMuted, lineHeight: '1.5' }}>
-                                        Note: The daemon monitors local timezone changes and runs the sync daily at the specified time. Triggering sync manually updates the history immediately in the background without affecting the automated schedule.
-                                    </div>
-
-                                    <button
-                                        type="submit"
-                                        style={{
-                                            padding: '12px',
-                                            background: '#ffaa00',
-                                            color: '#000000',
-                                            border: 'none',
-                                            borderRadius: '8px',
-                                            fontWeight: '800',
-                                            fontSize: '0.85rem',
-                                            cursor: 'pointer',
-                                            boxShadow: '0 4px 12px rgba(255,170,0,0.15)',
-                                            transition: 'all 0.2s',
-                                            marginTop: 'auto'
-                                        }}
-                                    >
-                                        Save Schedule Settings
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                
 
                 {/* =========================================== */}
                 {/* SHARE HISTORY (REPORTS) PANEL               */}
@@ -3787,6 +3027,122 @@ const AdminSetup = () => {
                                         </tbody>
                                     </table>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* =========================================== */}
+                {/* USER AUDIT LOGS / TELEMETRY PANEL           */}
+                {/* =========================================== */}
+                {activeTab === 'user-telemetry' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <h2 style={{ fontSize: '1.35rem', fontWeight: '800', margin: '0 0 4px 0' }}>User Activity Audit Logs</h2>
+                                <p style={{ fontSize: '0.82rem', color: themeStyles.textMuted, margin: 0 }}>
+                                    Track session duration, navigation patterns, and active time spent on each portal page by authenticated system operators.
+                                </p>
+                            </div>
+                            <button
+                                onClick={fetchTelemetry}
+                                style={{
+                                    padding: '10px 16px',
+                                    background: 'rgba(255,255,255,0.05)',
+                                    color: themeStyles.textMain,
+                                    border: themeStyles.inputBorder,
+                                    borderRadius: '12px',
+                                    fontWeight: '700',
+                                    fontSize: '0.8rem',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    transition: 'all 0.2s ease'
+                                }}
+                            >
+                                <RefreshCw size={14} />
+                                <span>Refresh Logs</span>
+                            </button>
+                        </div>
+
+                        {/* Search & Filter Controls */}
+                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                            <div style={{ position: 'relative', flex: 1 }}>
+                                <input
+                                    type="text"
+                                    placeholder="Search by username or page path..."
+                                    value={telemetrySearch}
+                                    onChange={(e) => setTelemetrySearch(e.target.value)}
+                                    style={{
+                                        width: '100%',
+                                        padding: '12px 16px',
+                                        borderRadius: '12px',
+                                        background: themeStyles.cardBg,
+                                        border: themeStyles.inputBorder,
+                                        color: themeStyles.textMain,
+                                        fontSize: '0.85rem',
+                                        outline: 'none'
+                                    }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Audit Table Card */}
+                        <div style={{ background: themeStyles.cardBg, border: themeStyles.cardBorder, borderRadius: '16px', padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: themeStyles.cardBorder, color: themeStyles.textMuted }}>
+                                            <th style={{ padding: '12px 16px', textAlign: 'left' }}>Operator Username</th>
+                                            <th style={{ padding: '12px 16px', textAlign: 'left' }}>Accessed Page Path</th>
+                                            <th style={{ padding: '12px 16px', textAlign: 'center' }}>Total Time Spent</th>
+                                            <th style={{ padding: '12px 16px', textAlign: 'right' }}>Last Activity Timestamp</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {filteredTelemetry.length === 0 ? (
+                                            <tr>
+                                                <td colSpan="4" style={{ padding: '4rem', textAlign: 'center', color: themeStyles.textMuted }}>
+                                                    No audit trail found matching the search criteria.
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            filteredTelemetry.map((item, idx) => {
+                                                const formatTime = (secs) => {
+                                                    if (!secs) return '0s';
+                                                    const h = Math.floor(secs / 3600);
+                                                    const m = Math.floor((secs % 3600) / 60);
+                                                    const s = secs % 60;
+                                                    return `${h > 0 ? h + 'h ' : ''}${m > 0 ? m + 'm ' : ''}${s}s`;
+                                                };
+                                                const formattedDate = item.last_active_at 
+                                                    ? new Date(item.last_active_at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+                                                    : 'N/A';
+
+                                                return (
+                                                    <tr key={idx} style={{ 
+                                                        borderBottom: '1px solid rgba(255,255,255,0.02)',
+                                                        background: idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)'
+                                                    }}>
+                                                        <td style={{ padding: '14px 16px', fontWeight: '700', color: themeStyles.accentColor }}>
+                                                            {item.username}
+                                                        </td>
+                                                        <td style={{ padding: '14px 16px', fontFamily: 'monospace', color: themeStyles.textMuted }}>
+                                                            {item.page_path}
+                                                        </td>
+                                                        <td style={{ padding: '14px 16px', textAlign: 'center', fontWeight: '600' }}>
+                                                            {formatTime(item.duration_seconds)}
+                                                        </td>
+                                                        <td style={{ padding: '14px 16px', textAlign: 'right', color: themeStyles.textMuted }}>
+                                                            {formattedDate}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </div>

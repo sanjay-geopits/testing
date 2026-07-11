@@ -1723,7 +1723,13 @@ def process_mail(item, override_client=None, override_server=None, override_db=N
     if override_log_type is not None:
         log_type = override_log_type
     
-    if log_type not in ["error_log", "event_log", "agent_log", "db_uptime", "mssql_alert", "long_running_queries"]:
+    allowed_log_types = [
+        "error_log", "event_log", "agent_log", "db_uptime", "mssql_alert", "long_running_queries",
+        "disk_io", "disk_io_latency", "wait_stats", "wait_statistics", "long_queries", 
+        "deadlocks", "deadlock_report", "tempdb", "tempdb_usage", "job_executions", 
+        "blocking", "blocking_sessions", "error_logs", "cpu_querystore", "mem_querystore", "generic"
+    ]
+    if log_type not in allowed_log_types:
         return
 
     client = client or "Unknown"
@@ -1756,6 +1762,35 @@ def process_mail(item, override_client=None, override_server=None, override_db=N
         logs=parse_error(body)
     elif log_type=="agent_log":
         logs=parse_agent(body)
+    elif log_type in ["disk_io", "disk_io_latency", "wait_stats", "wait_statistics", "long_queries", 
+                      "long_running_queries", "deadlocks", "deadlock_report", "tempdb", "tempdb_usage", 
+                      "job_executions", "blocking", "blocking_sessions", "error_logs", "cpu_querystore", 
+                      "mem_querystore", "generic"]:
+        # Fallback parsing for diagnostic / telemetry logs: extract JSON/HTML table from body or fallback to raw
+        parsed_records = []
+        try:
+            from email_fetcher import parse_body_data
+            parsed_records = parse_body_data(body, getattr(item, 'html_body', None) or "")
+        except Exception:
+            pass
+        
+        if not parsed_records:
+            parsed_records = [{"raw_text": body}]
+            
+        logs = []
+        for rec in parsed_records:
+            from email_fetcher import extract_record_timestamp
+            rec_timestamp = extract_record_timestamp(rec, received)
+            if rec_timestamp.tzinfo:
+                rec_timestamp = rec_timestamp.replace(tzinfo=None)
+            ts_str = rec_timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            
+            if "raw_text" in rec:
+                msg = rec["raw_text"]
+            else:
+                msg = json.dumps(rec)
+            
+            logs.append((ts_str, "Telemetry", msg))
     elif log_type=="db_uptime":
         if db in ["MySQL", "PostgreSQL", "MongoDB"]:
             # Clean/normalize body text first
@@ -2249,6 +2284,18 @@ def process_mail(item, override_client=None, override_server=None, override_db=N
                         """, (ticket_id, f"Ticket automatically resolved: Closure alert received for SPID {spid} on server {server}. The database session has been terminated and the incident is now closed."))
                         print(f"Resolved existing ticket #{ticket_id} for SPID {spid}")
 
+                        # Extract SQL query from existing description or current alert details
+                        closed_sql_query = sql_text or ""
+                        if not closed_sql_query and existing_ticket and existing_ticket[2]:
+                            desc = existing_ticket[2]
+                            if "Executing SQL:" in desc:
+                                try:
+                                    parts = desc.split("Executing SQL:")
+                                    if len(parts) > 1:
+                                        closed_sql_query = parts[1].split("Email Body:")[0].strip()
+                                except Exception:
+                                    pass
+
                         # Send closure notification email to client + tech contacts
                         try:
                             from db_manager import get_alert_contacts
@@ -2256,6 +2303,17 @@ def process_mail(item, override_client=None, override_server=None, override_db=N
                             closure_to = resolved["to_emails"]
                             closure_time = received.strftime('%Y-%m-%d %H:%M:%S') if received else ''
                             closure_subject = f"[Ticket #{ticket_id}] RESOLVED: {closed_ticket_name}"
+                            
+                            sql_section = ""
+                            if closed_sql_query:
+                                sql_section = f"""
+      <!-- SQL Query Section -->
+      <div style="margin-top: 24px; margin-bottom: 24px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px;">
+        <h4 style="margin: 0 0 10px 0; color: #334155; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Resolved SQL Query</h4>
+        <pre style="margin: 0; white-space: pre-wrap; word-break: break-all; font-family: Consolas, Monaco, monospace; font-size: 12px; color: #0f172a; background: #ffffff; border: 1px solid #e2e8f0; padding: 12px; border-radius: 4px; max-height: 250px; overflow-y: auto;">{closed_sql_query}</pre>
+      </div>
+"""
+
                             closure_body = f"""
 <html>
 <body style="font-family: Calibri, Arial, sans-serif; background-color: #f8fafc; color: #1e293b; margin: 0; padding: 0;">
@@ -2305,6 +2363,7 @@ def process_mail(item, override_client=None, override_server=None, override_db=N
           <td style="padding: 10px 14px; border: 1px solid #e2e8f0;"><span style="background:#dcfce7; color:#166534; padding: 3px 10px; border-radius: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase;">RESOLVED</span></td>
         </tr>
       </table>
+      {sql_section}
       <p style="margin: 0 0 8px 0; font-size: 13px; color: #64748b; line-height: 1.7;">
         Our DBA team has reviewed and closed this incident. If you continue to experience any database performance issues or have further questions,
         please do not hesitate to reach out to us by replying to this email.
@@ -2336,9 +2395,10 @@ def process_mail(item, override_client=None, override_server=None, override_db=N
             finally:
                 conn.close()
         return
-    elif log_type in ["disk_io_latency", "deadlock_report", 
-                      "missing_index", "transaction_log_usage", "blocking_sessions", 
-                      "wait_statistics", "tempdb_usage", "generic"]:
+    elif log_type in ["disk_io", "disk_io_latency", "wait_stats", "wait_statistics", "long_queries", 
+                      "long_running_queries", "deadlocks", "deadlock_report", "tempdb", "tempdb_usage", 
+                      "job_executions", "blocking", "blocking_sessions", "error_logs", "cpu_querystore", 
+                      "mem_querystore", "generic"]:
         pass
     else:
         return
@@ -2733,22 +2793,7 @@ Check Time: 2026-06-16 08:00 UTC"""
         subject = (item.subject or "").strip()
         msg_id = getattr(item, 'id', None) or getattr(item, 'message_id', None)
         
-        # Skip Maxhealthcare emails
-        _subj_clean = re.sub(r'MAX\s*Healthcare|MAXHealthcare', 'maxhealthcare', subject, flags=re.IGNORECASE).lower()
-        if "maxhealthcare" in _subj_clean:
-            print(f"[SKIP] Excluding Maxhealthcare email: {subject}")
-            if not item.is_read:
-                try:
-                    item.is_read = True; item.save()
-                except Exception: pass
-            if msg_id:
-                try:
-                    _pc = get_connection(); _pcc = _pc.cursor()
-                    _pcc.execute("INSERT INTO processed_emails (message_id, subject, sender) VALUES (%s, %s, %s) ON CONFLICT (message_id) DO NOTHING",
-                                 (str(msg_id), subject[:490], "SYSTEM"))
-                    _pc.commit(); _pcc.close(); _pc.close()
-                except Exception: pass
-            continue
+        # Maxhealthcare exclusion filter removed to read all mail properly.
 
         try:
             if msg_id:
@@ -2868,25 +2913,7 @@ Check Time: 2026-06-16 08:00 UTC"""
         subject = (item.subject or "").strip()
         msg_id = getattr(item, 'id', None) or getattr(item, 'message_id', None)
 
-        # Skip Maxhealthcare emails
-        _subj_clean = re.sub(r'MAX\s*Healthcare|MAXHealthcare', 'maxhealthcare', subject, flags=re.IGNORECASE).lower()
-        if "maxhealthcare" in _subj_clean:
-            print(f"[SKIP] Excluding Maxhealthcare email: {subject}")
-            if not item.is_read:
-                try:
-                    item.is_read = True; item.save()
-                except Exception: pass
-            if msg_id:
-                try:
-                    _pc = get_connection(); _pcc = _pc.cursor()
-                    _pcc.execute("""
-                        INSERT INTO processed_emails (message_id, subject, sender, received_at) 
-                        VALUES (%s, %s, %s, %s) 
-                        ON CONFLICT (message_id) DO NOTHING
-                    """, (str(msg_id), subject[:490], "SYSTEM", item.datetime_received.replace(tzinfo=None)))
-                    _pc.commit(); _pcc.close(); _pc.close()
-                except Exception: pass
-            continue
+        # Maxhealthcare exclusion filter removed to read all mail properly.
 
         try:
             if msg_id:
@@ -2916,7 +2943,7 @@ Check Time: 2026-06-16 08:00 UTC"""
             if msg_id:
                 try:
                     _pc = get_connection(); _pcc = _pc.cursor()
-                    _pcc.execute("""
+                    _pc.execute("""
                         INSERT INTO processed_emails (message_id, subject, sender, received_at) 
                         VALUES (%s, %s, %s, %s) 
                         ON CONFLICT (message_id) DO NOTHING
@@ -2925,27 +2952,62 @@ Check Time: 2026-06-16 08:00 UTC"""
                 except Exception: pass
             continue
 
-        time.sleep(0.3)
-        client, server, db, log_type = parse_subject(subject)
-        if not client or not log_type or log_type == "generic":
-            # Force mssql_alert for unrecognised subjects in this folder
-            log_type = "mssql_alert"
-            _subj_n = re.sub(r'MAX\s*Healthcare', 'Maxhealthcare', subject, flags=re.IGNORECASE)
-            _m = re.match(r'^([A-Za-z][A-Za-z0-9]+)\s+([A-Za-z0-9_\-\.]+)', _subj_n)
-            if _m:
-                client = client or _m.group(1).strip()
-                server = server or _m.group(2).strip()
-            client = client or "Unknown"; server = server or "Unknown"; db = db or "MSSQL"
+        is_rds = bool(subject and _is_rds_mail(subject))
+        if is_rds:
+            print(f"[Ai-report-automation] Processing RDS email: {subject}")
+            try:
+                process_rds_mail(item)
+                audit_logger.info(f"[PROCESSED RDS] {subject}")
+            except Exception as _e:
+                print(f"[Ai-report-automation] process_rds_mail error: {_e}")
+        else:
+            time.sleep(0.3)
+            client, server, db, log_type = parse_subject(subject)
+            if not client or not log_type or log_type == "generic":
+                # Force mssql_alert for unrecognised subjects in this folder
+                log_type = "mssql_alert"
+                _subj_n = re.sub(r'MAX\s*Healthcare', 'Maxhealthcare', subject, flags=re.IGNORECASE)
+                _m = re.match(r'^([A-Za-z][A-Za-z0-9]+)\s+([A-Za-z0-9_\-\.]+)', _subj_n)
+                if _m:
+                    client = client or _m.group(1).strip()
+                    server = server or _m.group(2).strip()
+                client = client or "Unknown"; server = server or "Unknown"; db = db or "MSSQL"
 
-        print(f"[Ai-report-automation] Processing: {subject}")
+            print(f"[Ai-report-automation] Processing: {subject}")
+            try:
+                process_mail(item, override_client=client, override_server=server, override_db=db, override_log_type=log_type)
+                audit_logger.info(f"[PROCESSED] {subject}")
+            except Exception as _e:
+                print(f"[Ai-report-automation] process_mail error: {_e}")
+            
+            # If it is MSSQL telemetry (not an RDS report), also run email_fetcher processing
+            if db == "MSSQL":
+                try:
+                    from email_fetcher import process_email_item
+                    _fc = get_connection()
+                    process_email_item(_fc, item)
+                    _fc.close()
+                    print(f"[Ai-report-automation] Telemetry process complete: {subject}")
+                except Exception as _t_err:
+                    print(f"[Ai-report-automation] email_fetcher telemetry error: {_t_err}")
+
+
+
+    if ai_items:
         try:
-            process_mail(item, override_client=client, override_server=server, override_db=db, override_log_type=log_type)
-            audit_logger.info(f"[PROCESSED] {subject}")
-        except Exception as _e:
-            print(f"[Ai-report-automation] process_mail error: {_e}")
-        if not item.is_read:
-            item.is_read = True; item.save()
-        if msg_id:
+            save_folder_watermark("Ai-report-automation", ai_items[-1].datetime_received)
+        except Exception:
+            try: save_folder_watermark("Ai-report-automation")
+            except Exception: pass
+    else:
+        # Keep existing watermark, only write if none exists
+        if not get_folder_watermark("Ai-report-automation"):
+            try:
+                save_folder_watermark("Ai-report-automation", _dt.datetime.utcnow())
+            except Exception: pass
+
+
+        if False:
             try:
                 _pc = get_connection(); _pcc = _pc.cursor()
                 _pcc.execute("""
@@ -2956,16 +3018,7 @@ Check Time: 2026-06-16 08:00 UTC"""
                 _pc.commit(); _pcc.close(); _pc.close()
             except Exception: pass
 
-    if ai_items:
-        try:
-            save_folder_watermark("Ai-report-automation", ai_items[-1].datetime_received)
-        except Exception:
-            try: save_folder_watermark("Ai-report-automation")
-            except Exception: pass
-    else:
-        try:
-            save_folder_watermark("Ai-report-automation", _dt.datetime.utcnow())
-        except Exception: pass
+
 
     # ════════════════════════════════════════════════════════════════════════
     # FOLDER 3 — MySQL-Mongo-Postgres-DB  →  DB & Table size telemetry only
@@ -3003,25 +3056,7 @@ Check Time: 2026-06-16 08:00 UTC"""
         subject = (item.subject or "").strip()
         msg_id = getattr(item, 'id', None) or getattr(item, 'message_id', None)
 
-        # Skip Maxhealthcare emails
-        _subj_clean = re.sub(r'MAX\s*Healthcare|MAXHealthcare', 'maxhealthcare', subject, flags=re.IGNORECASE).lower()
-        if "maxhealthcare" in _subj_clean:
-            print(f"[SKIP] Excluding Maxhealthcare email: {subject}")
-            if not item.is_read:
-                try:
-                    item.is_read = True; item.save()
-                except Exception: pass
-            if msg_id:
-                try:
-                    _pc = get_connection(); _pcc = _pc.cursor()
-                    _pcc.execute("""
-                        INSERT INTO processed_emails (message_id, subject, sender, received_at) 
-                        VALUES (%s, %s, %s, %s) 
-                        ON CONFLICT (message_id) DO NOTHING
-                    """, (str(msg_id), subject[:490], "SYSTEM", item.datetime_received.replace(tzinfo=None)))
-                    _pc.commit(); _pcc.close(); _pc.close()
-                except Exception: pass
-            continue
+        # Maxhealthcare exclusion filter removed to read all mail properly.
 
         try:
             if msg_id:
@@ -3176,22 +3211,7 @@ Check Time: 2026-06-16 08:00 UTC"""
 
             time.sleep(0.5)
 
-            # Skip Maxhealthcare emails
-            _subj_clean = re.sub(r'MAX\s*Healthcare|MAXHealthcare', 'maxhealthcare', subject, flags=re.IGNORECASE).lower()
-            if "maxhealthcare" in _subj_clean:
-                print(f"[SKIP] Excluding Maxhealthcare email: {subject}")
-                if not item.is_read:
-                    try:
-                        item.is_read = True; item.save()
-                    except Exception: pass
-                # Get sender details for mark_as_processed
-                _sender_email = "SYSTEM"
-                if hasattr(item, 'sender') and item.sender and hasattr(item.sender, 'email_address') and item.sender.email_address:
-                    _sender_email = item.sender.email_address
-                elif hasattr(item, 'author') and item.author and hasattr(item.author, 'email_address') and item.author.email_address:
-                    _sender_email = item.author.email_address
-                mark_as_processed(msg_id, subject, _sender_email)
-                continue
+            # Maxhealthcare exclusion filter removed to read all mail properly.
 
             # Get sender details
             sender_email = "SYSTEM"

@@ -86,6 +86,11 @@ const Dashboard = () => {
     const [shareHistoryModal, setShareHistoryModal] = useState(false);
     const [shareHistoryData, setShareHistoryData] = useState([]);
 
+    // User Activity History
+    const [activityHistoryModal, setActivityHistoryModal] = useState(false);
+    const [activityHistoryData, setActivityHistoryData] = useState([]);
+    const [activityHistoryLoading, setActivityHistoryLoading] = useState(false);
+
     // Filters
     const [searchTerm, setSearchTerm] = useState('');
     const [timeRange, setTimeRange] = useState(() => {
@@ -240,6 +245,19 @@ const Dashboard = () => {
             const res = await api.get('/share/history', authHeader());
             setShareHistoryData(res.data?.history || []);
         } catch (e) { console.error(e); }
+    };
+
+    const fetchActivityHistory = async () => {
+        setActivityHistoryModal(true);
+        setActivityHistoryLoading(true);
+        try {
+            const res = await api.get('/new-features/monitoring/my-page-time', authHeader());
+            setActivityHistoryData(res.data?.telemetry || []);
+        } catch (e) {
+            console.error("Failed to fetch activity history:", e);
+        } finally {
+            setActivityHistoryLoading(false);
+        }
     };
 
     const handleGenerateAISummary = async () => {
@@ -890,6 +908,9 @@ const Dashboard = () => {
                                 <button className="dropdown-item" onClick={() => { fetchAIHistory(); setProfileDropdownOpen(false); }}>
                                     <Sparkles size={18} /> <span>Summary History</span>
                                 </button>
+                                <button className="dropdown-item" onClick={() => { fetchActivityHistory(); setProfileDropdownOpen(false); }}>
+                                    <Clock size={18} /> <span>Activity History</span>
+                                </button>
                                 <div className="dropdown-divider"></div>
                                 <button className="dropdown-item logout" onClick={logout}>
                                     <LogOut size={18} /> <span>Logout</span>
@@ -1094,6 +1115,89 @@ const Dashboard = () => {
                                     </tbody>
                                 </table>
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* User Activity History Modal */}
+                {activityHistoryModal && (
+                    <div className="modal-backdrop">
+                        <div className="glass modal-content" style={{ width: '90vw', maxWidth: '800px', maxHeight: '80vh', position: 'relative', display: 'flex', flexDirection: 'column', padding: '30px' }}>
+                            <button onClick={() => setActivityHistoryModal(false)} className="btn-close" style={{ position: 'absolute', top: '20px', right: '20px' }}><X size={20} /></button>
+                            <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <Clock size={24} color="var(--accent-glow)" />
+                                <h2 style={{ margin: 0, fontSize: '1.5rem' }}>My Activity History</h2>
+                            </div>
+                            
+                            {activityHistoryLoading ? (
+                                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
+                                    <div className="bubble-loader">
+                                        <div className="bubble"></div>
+                                        <div className="bubble" style={{ animationDelay: '0.2s' }}></div>
+                                        <div className="bubble" style={{ animationDelay: '0.4s' }}></div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="table-responsive" style={{ flex: 1, overflowY: 'auto' }}>
+                                    <table className="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Page / Dashboard</th>
+                                                <th>Time Spent</th>
+                                                <th>Last Active Time</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {activityHistoryData.map((h, idx) => {
+                                                let pageName = h.page_path;
+                                                if (h.page_path === '/') pageName = 'Observability Dashboard';
+                                                else if (h.page_path.includes('/admin')) pageName = 'Admin Settings Workspace';
+                                                else if (h.page_path.includes('/observability')) pageName = 'Analytics Hub';
+                                                else if (h.page_path.includes('/log-status')) pageName = 'Archive Log Hub';
+                                                else if (h.page_path.includes('/lead')) pageName = 'User Management Panel';
+                                                
+                                                const dur = h.duration_seconds || 0;
+                                                let durStr = '';
+                                                if (dur < 60) {
+                                                    durStr = `${dur}s`;
+                                                } else if (dur < 3600) {
+                                                    durStr = `${Math.floor(dur / 60)}m ${dur % 60}s`;
+                                                } else {
+                                                    durStr = `${Math.floor(dur / 3600)}h ${Math.floor((dur % 3600) / 60)}m`;
+                                                }
+
+                                                return (
+                                                    <tr key={idx}>
+                                                        <td style={{ fontWeight: 700, color: 'white' }}>{pageName}</td>
+                                                        <td>
+                                                            <span style={{ 
+                                                                background: 'rgba(56, 189, 248, 0.1)', 
+                                                                color: '#38bdf8', 
+                                                                padding: '4px 8px', 
+                                                                borderRadius: '6px', 
+                                                                fontSize: '0.8rem',
+                                                                fontWeight: '700'
+                                                            }}>
+                                                                {durStr}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ color: 'var(--text-muted)' }}>
+                                                            {h.last_active_at ? new Date(h.last_active_at).toLocaleString() : 'N/A'}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                            {activityHistoryData.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="3" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                                                        No page activity records found.
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}

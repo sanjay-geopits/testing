@@ -45,8 +45,8 @@ const GRID_CONFIGS = [
         color:  '#f59e0b',
         grad:   'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
         bg:     'rgba(245,158,11,0.10)',
-        route:  (c) => `/telemetry-client-metrics/${c}?metric=cpu`,
-        live:   true,
+        route:  null,
+        live:   false,
     },
     {
         key:    'memory',
@@ -57,8 +57,8 @@ const GRID_CONFIGS = [
         color:  '#8b5cf6',
         grad:   'linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)',
         bg:     'rgba(139,92,246,0.10)',
-        route:  (c) => `/telemetry-client-metrics/${c}?metric=memory`,
-        live:   true,
+        route:  null,
+        live:   false,
     },
     {
         key:    'disk',
@@ -69,8 +69,8 @@ const GRID_CONFIGS = [
         color:  '#ef4444',
         grad:   'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)',
         bg:     'rgba(239,68,68,0.10)',
-        route:  (c) => `/telemetry-client-metrics/${c}?metric=disk`,
-        live:   true,
+        route:  null,
+        live:   false,
     },
     {
         key:    'iops',
@@ -81,8 +81,8 @@ const GRID_CONFIGS = [
         color:  '#06b6d4',
         grad:   'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
         bg:     'rgba(6,182,212,0.10)',
-        route:  (c) => `/telemetry-client-metrics/${c}?metric=iops`,
-        live:   true,
+        route:  null,
+        live:   false,
     },
     {
         key:    'status',

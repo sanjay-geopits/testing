@@ -453,6 +453,7 @@ class AdminAgentCreate(BaseModel):
     company_name: str
     business_unit: str
     technology: str
+    email: Optional[str] = None
 
 class UserPermissionCreate(BaseModel):
     email: str
@@ -783,7 +784,14 @@ def get_reports(client_name: str, user: dict = Depends(get_current_user_local)):
         # Verify non-admin has technology clearance for this client database type
         if not user.get("isAdmin"):
             assigned_techs = [t.lower().strip() for t in user.get("assigned_techs", [])]
-            cur.execute("SELECT id FROM admin_clients WHERE client_name = %s AND LOWER(TRIM(db_type)) = ANY(%s);", (client_name, assigned_techs))
+            cur.execute("""
+                SELECT id FROM admin_clients 
+                WHERE client_name = %s 
+                  AND EXISTS (
+                      SELECT 1 FROM unnest(string_to_array(REPLACE(LOWER(db_type), ' ', ''), ',')) AS t 
+                      WHERE t = ANY(%s)
+                  );
+            """, (client_name, assigned_techs))
             if not cur.fetchone():
                 return {"reports": []}
                 
@@ -1212,7 +1220,7 @@ def save_page_time(ping: PageTimePing, user: dict = Depends(get_current_user_loc
 @router.get("/monitoring/page-time")
 def get_page_time_logs(user: dict = Depends(get_current_user_local)):
     # Admin only check
-    if not user.get("isAdmin"):
+    if not user.get("isAdmin") and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin authorization required")
         
     conn = get_connection()
@@ -1224,6 +1232,31 @@ def get_page_time_logs(user: dict = Depends(get_current_user_local)):
             ORDER BY duration_seconds DESC;
         """)
         rows = cur.fetchall()
+        return {"telemetry": rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@router.get("/monitoring/my-page-time")
+def get_my_page_time_logs(user: dict = Depends(get_current_user_local)):
+    username = user.get("username")
+    if not username:
+        raise HTTPException(status_code=401, detail="Authentication required")
+        
+    conn = get_connection()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT page_path, duration_seconds, last_active_at 
+            FROM user_page_activity 
+            WHERE LOWER(username) = LOWER(%s)
+            ORDER BY last_active_at DESC;
+        """, (username,))
+        rows = cur.fetchall()
+        for r in rows:
+            if r["last_active_at"]:
+                r["last_active_at"] = r["last_active_at"].isoformat()
         return {"telemetry": rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1401,7 +1434,13 @@ def get_admin_clients(user: dict = Depends(get_current_user_local)):
                 cur.execute("SELECT * FROM admin_clients WHERE client_name = ANY(%s) ORDER BY client_name;", (allowed_clients,))
             else:
                 assigned_techs = [t.lower().strip() for t in user.get("assigned_techs", [])]
-                cur.execute("SELECT * FROM admin_clients WHERE LOWER(TRIM(db_type)) = ANY(%s) ORDER BY client_name;", (assigned_techs,))
+                cur.execute("""
+                    SELECT * FROM admin_clients 
+                    WHERE EXISTS (
+                        SELECT 1 FROM unnest(string_to_array(REPLACE(LOWER(db_type), ' ', ''), ',')) AS t 
+                        WHERE t = ANY(%s)
+                    ) ORDER BY client_name;
+                """, (assigned_techs,))
         rows = cur.fetchall()
         result = {"clients": [dict(r) for r in rows]}
         cache_manager.set(cache_key, result, ttl_seconds=30)
@@ -1420,10 +1459,10 @@ def create_admin_agent(agent: AdminAgentCreate, user: dict = Depends(get_current
     try:
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO admin_agents (agent_name, company_name, business_unit, technology)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO admin_agents (agent_name, company_name, business_unit, technology, email)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id;
-        """, (agent.agent_name, agent.company_name, agent.business_unit, agent.technology))
+        """, (agent.agent_name, agent.company_name, agent.business_unit, agent.technology, agent.email))
         agent_id = cur.fetchone()[0]
         conn.commit()
         cache_manager.invalidate("admin-agents:")
@@ -1525,6 +1564,45 @@ def create_user_permissions(perm: UserPermissionCreate, user: dict = Depends(get
             """, (username, perm.email.strip(), username.capitalize(), hashed_pwd, role_selected))
             
         conn.commit()
+
+        # Send technology & role assignment notification email
+        try:
+            subject = f"[GeoVexSight] System Privilege Allocation Updated"
+            role_display = "Lead" if perm.is_lead else (perm.role if perm.role else "User")
+            body = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; background-color: #fafafa;">
+                    <h2 style="color: #2b6cb0; border-bottom: 2px solid #2b6cb0; padding-bottom: 10px; margin-top: 0;">GeoVexSight Access Control</h2>
+                    <p>Dear System Operator,</p>
+                    <p>We are writing to notify you that your technology scopes and system role have been updated by an administrator:</p>
+                    
+                    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                        <tr style="background-color: #f7fafc;">
+                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold; width: 150px;">Role Assigned:</td>
+                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold; color: #2c5282;">{role_display.upper()}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold;">Technologies:</td>
+                            <td style="padding: 10px; border: 1px solid #edf2f7;"><span style="background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em;">{perm.technology}</span></td>
+                        </tr>
+                        <tr style="background-color: #f7fafc;">
+                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold;">Status:</td>
+                            <td style="padding: 10px; border: 1px solid #edf2f7;">{perm.status.capitalize()}</td>
+                        </tr>
+                    </table>
+
+                    <p>You can access the portal dashboard to monitor these technologies.</p>
+                    <p style="margin-bottom: 0;">Best Regards,<br/><strong>GeoVexSight Security Team</strong></p>
+                </div>
+            </body>
+            </html>
+            """
+            send_email_outlook(to_emails=perm.email.strip(), cc_emails=None, subject=subject, body=body)
+            print(f"[PRIVILEGE NOTIFICATION SENT] Emailed {perm.email.strip()} about role/technology scopes")
+        except Exception as mail_err:
+            print(f"[PRIVILEGE NOTIFICATION ERROR] Failed to send email to {perm.email}: {mail_err}")
+
         return {"status": "success"}
     except Exception as e:
         conn.rollback()
@@ -1602,6 +1680,44 @@ def create_user_client_permission(perm: UserClientPermissionCreate, user: dict =
         """, (user_id, client_id, perm.access_level))
         
         conn.commit()
+
+        # Send privilege assignment notification email
+        try:
+            subject = f"[GeoVexSight] Client Privilege Allocated: {client_name_clean}"
+            body = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; background-color: #fafafa;">
+                    <h2 style="color: #2b6cb0; border-bottom: 2px solid #2b6cb0; padding-bottom: 10px; margin-top: 0;">GeoVexSight Access Control</h2>
+                    <p>Dear System Operator,</p>
+                    <p>We are writing to notify you that an administrator has assigned or updated your access privileges for the following client environment:</p>
+                    
+                    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                        <tr style="background-color: #f7fafc;">
+                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold; width: 150px;">Client Name:</td>
+                            <td style="padding: 10px; border: 1px solid #edf2f7;">{client_name_clean}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold;">Access Level:</td>
+                            <td style="padding: 10px; border: 1px solid #edf2f7;"><span style="background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em;">{perm.access_level}</span></td>
+                        </tr>
+                        <tr style="background-color: #f7fafc;">
+                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold;">Assigned By:</td>
+                            <td style="padding: 10px; border: 1px solid #edf2f7;">{user.get("username", "System Administrator")}</td>
+                        </tr>
+                    </table>
+
+                    <p>You can now view metrics, logs, and telemetry related to this client in your dashboard.</p>
+                    <p style="margin-bottom: 0;">Best Regards,<br/><strong>GeoVexSight Security Team</strong></p>
+                </div>
+            </body>
+            </html>
+            """
+            send_email_outlook(to_emails=email_clean, cc_emails=None, subject=subject, body=body)
+            print(f"[PRIVILEGE NOTIFICATION SENT] Emailed {email_clean} about privilege for client {client_name_clean}")
+        except Exception as mail_err:
+            print(f"[PRIVILEGE NOTIFICATION ERROR] Failed to send email to {email_clean}: {mail_err}")
+
         return {"status": "success"}
     except HTTPException as he:
         conn.rollback()
@@ -1790,6 +1906,13 @@ class AdminUserCreate(BaseModel):
     password: str
     role: str
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+class ProfilePicRequest(BaseModel):
+    profile_pic: str
+
 class AdminUserUpdate(BaseModel):
     username: str
     email: str
@@ -1817,15 +1940,66 @@ class TicketAdminUpdate(BaseModel):
 
 @router.get("/admin/users")
 def get_admin_users(user: dict = Depends(get_current_user_local)):
-    if not user.get("isAdmin"):
-        raise HTTPException(status_code=403, detail="Admin authorization required")
+    is_admin = user.get("isAdmin") or user.get("role") == "admin"
+    is_lead = user.get("role") == "lead"
+    if not is_admin and not is_lead:
+        raise HTTPException(status_code=403, detail="Admin or Lead authorization required")
     
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("SELECT id, username, email, full_name, role FROM users ORDER BY id;")
+        if is_admin:
+            cur.execute("""
+                SELECT u.id, u.username, u.email, u.full_name, u.profile_pic, u.last_active_at,
+                       CASE 
+                           WHEN EXISTS (
+                               SELECT 1 FROM system_admins sa 
+                               WHERE LOWER(sa.email) = LOWER(u.email) AND sa.status = 'active'
+                           ) OR LOWER(u.role) = 'admin' THEN 'admin'
+                           WHEN EXISTS (
+                               SELECT 1 FROM leads l 
+                               WHERE (LOWER(l.email) = LOWER(u.email) OR LOWER(l.email) = LOWER(u.username))
+                                 AND l.is_lead = true 
+                                 AND l.status = 'active'
+                           ) THEN 'lead'
+                           ELSE u.role 
+                       END as role
+                FROM users u
+                ORDER BY u.last_active_at DESC NULLS LAST;
+            """)
+        else:
+            email = user.get("email") or ""
+            domain = email.split("@")[-1].lower() if "@" in email else ""
+            if not domain:
+                return {"users": []}
+            cur.execute("""
+                SELECT u.id, u.username, u.email, u.full_name, u.profile_pic, u.last_active_at,
+                       CASE 
+                           WHEN EXISTS (
+                               SELECT 1 FROM system_admins sa 
+                               WHERE LOWER(sa.email) = LOWER(u.email) AND sa.status = 'active'
+                           ) OR LOWER(u.role) = 'admin' THEN 'admin'
+                           WHEN EXISTS (
+                               SELECT 1 FROM leads l 
+                               WHERE (LOWER(l.email) = LOWER(u.email) OR LOWER(l.email) = LOWER(u.username))
+                                 AND l.is_lead = true 
+                                 AND l.status = 'active'
+                           ) THEN 'lead'
+                           ELSE u.role 
+                       END as role
+                FROM users u
+                WHERE LOWER(u.email) LIKE %s
+                ORDER BY u.last_active_at DESC NULLS LAST;
+            """, (f"%@{domain}",))
+        
         rows = cur.fetchall()
-        return {"users": [dict(r) for r in rows]}
+        results = []
+        for r in rows:
+            row = dict(r)
+            if row.get('last_active_at') and isinstance(row['last_active_at'], datetime):
+                row['last_active_at'] = row['last_active_at'].astimezone(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
+            results.append(row)
+        return {"users": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -1833,9 +2007,21 @@ def get_admin_users(user: dict = Depends(get_current_user_local)):
 
 @router.post("/admin/users")
 def add_admin_user(user_req: AdminUserCreate, user: dict = Depends(get_current_user_local)):
-    if not user.get("isAdmin"):
-        raise HTTPException(status_code=403, detail="Admin authorization required")
+    is_admin = user.get("isAdmin") or user.get("role") == "admin"
+    is_lead = user.get("role") == "lead"
+    if not is_admin and not is_lead:
+        raise HTTPException(status_code=403, detail="Admin or Lead authorization required")
     
+    if is_lead:
+        lead_email = user.get("email") or ""
+        lead_domain = lead_email.split("@")[-1].lower() if "@" in lead_email else ""
+        req_email = user_req.email or ""
+        req_domain = req_email.split("@")[-1].lower() if "@" in req_email else ""
+        if not lead_domain or lead_domain != req_domain:
+            raise HTTPException(status_code=400, detail="Lead users can only add users within their own email domain")
+        if user_req.role not in ['user', 'client']:
+            raise HTTPException(status_code=403, detail="Lead users cannot create admin or lead accounts")
+            
     import bcrypt
     hashed_pwd = bcrypt.hashpw(user_req.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     
@@ -1860,14 +2046,40 @@ def add_admin_user(user_req: AdminUserCreate, user: dict = Depends(get_current_u
                 VALUES (%s, 'active')
                 ON CONFLICT (email) DO NOTHING;
             """, (user_req.email,))
-        else:
+        elif user_req.role == 'lead':
             cur.execute("""
-                INSERT INTO leads (email, technology, status)
-                VALUES (%s, 'MySQL, PostgreSQL, MongoDB, MSSQL', 'active')
-                ON CONFLICT (email, technology) DO NOTHING;
+                INSERT INTO leads (email, technology, status, is_lead)
+                VALUES (%s, 'MySQL, PostgreSQL, MongoDB, MSSQL', 'active', TRUE)
+                ON CONFLICT (email, technology) DO UPDATE SET is_lead = TRUE, status = 'active';
             """, (user_req.email,))
-            
         conn.commit()
+
+        # Send invitation email using the existing Outlook mail sender
+        try:
+            subject = "[GeoMon Portal] Invitation & Login Credentials"
+            body = f"""Hello {user_req.full_name},
+
+You have been invited to join the GeoMon Enterprise Observability Portal.
+
+Your login details are as follows:
+- Username: {user_req.username}
+- Temporary Password: {user_req.password}
+- Role: {user_req.role.upper()}
+
+Please login at http://localhost:8000/#/login and update your password using the "Change Password" console on the home screen.
+
+Best regards,
+GeoMon Administration Team
+"""
+            send_email_outlook(
+                to_emails=user_req.email,
+                cc_emails=None,
+                subject=subject,
+                body=body
+            )
+        except Exception as mail_err:
+            print(f"[MAIL ERROR] Failed to send invitation email: {mail_err}")
+
         return {"status": "success", "user_id": new_id}
     except HTTPException:
         raise
@@ -1879,16 +2091,34 @@ def add_admin_user(user_req: AdminUserCreate, user: dict = Depends(get_current_u
 
 @router.put("/admin/users/{user_id}")
 def update_admin_user(user_id: int, user_req: AdminUserUpdate, user: dict = Depends(get_current_user_local)):
-    if not user.get("isAdmin"):
-        raise HTTPException(status_code=403, detail="Admin authorization required")
+    is_admin = user.get("isAdmin") or user.get("role") == "admin"
+    is_lead = user.get("role") == "lead"
+    if not is_admin and not is_lead:
+        raise HTTPException(status_code=403, detail="Admin or Lead authorization required")
     
     conn = get_connection()
     try:
         cur = conn.cursor()
-        # Retrieve old email for cleanup
-        cur.execute("SELECT email FROM users WHERE id = %s;", (user_id,))
+        cur.execute("SELECT email, role FROM users WHERE id = %s;", (user_id,))
         old_row = cur.fetchone()
-        old_email = old_row[0] if old_row else None
+        if not old_row:
+            raise HTTPException(status_code=404, detail="User not found")
+        old_email = old_row[0]
+        
+        if is_lead:
+            lead_email = user.get("email") or ""
+            lead_domain = lead_email.split("@")[-1].lower() if "@" in lead_email else ""
+            old_email_domain = old_email.split("@")[-1].lower() if old_email and "@" in old_email else ""
+            if not lead_domain or lead_domain != old_email_domain:
+                raise HTTPException(status_code=403, detail="Lead users can only manage users within their own email domain")
+            
+            req_email = user_req.email or ""
+            req_domain = req_email.split("@")[-1].lower() if "@" in req_email else ""
+            if not lead_domain or lead_domain != req_domain:
+                raise HTTPException(status_code=400, detail="Lead users can only set emails within their own domain")
+            
+            if user_req.role not in ['user', 'client']:
+                raise HTTPException(status_code=403, detail="Lead users cannot grant admin or lead roles")
         
         if user_req.password:
             import bcrypt
@@ -1905,7 +2135,7 @@ def update_admin_user(user_id: int, user_req: AdminUserUpdate, user: dict = Depe
                 WHERE id = %s;
             """, (user_req.username, user_req.email, user_req.full_name, user_req.role, user_id))
             
-        # Clean up old email bindings if it changed
+        # Clean up old email bindings if changed
         if old_email and old_email != user_req.email:
             cur.execute("DELETE FROM system_admins WHERE email = %s;", (old_email,))
             cur.execute("DELETE FROM leads WHERE email = %s;", (old_email,))
@@ -1918,13 +2148,16 @@ def update_admin_user(user_id: int, user_req: AdminUserUpdate, user: dict = Depe
                 VALUES (%s, 'active')
                 ON CONFLICT (email) DO NOTHING;
             """, (user_req.email,))
-        else:
+        elif user_req.role == 'lead':
             cur.execute("DELETE FROM system_admins WHERE email = %s;", (user_req.email,))
             cur.execute("""
-                INSERT INTO leads (email, technology, status)
-                VALUES (%s, 'MySQL, PostgreSQL, MongoDB, MSSQL', 'active')
-                ON CONFLICT (email, technology) DO NOTHING;
+                INSERT INTO leads (email, technology, status, is_lead)
+                VALUES (%s, 'MySQL, PostgreSQL, MongoDB, MSSQL', 'active', TRUE)
+                ON CONFLICT (email, technology) DO UPDATE SET is_lead = TRUE, status = 'active';
             """, (user_req.email,))
+        else:
+            cur.execute("DELETE FROM system_admins WHERE email = %s;", (user_req.email,))
+            cur.execute("DELETE FROM leads WHERE email = %s;", (user_req.email,))
             
         conn.commit()
         return {"status": "success"}
@@ -1936,22 +2169,85 @@ def update_admin_user(user_id: int, user_req: AdminUserUpdate, user: dict = Depe
 
 @router.delete("/admin/users/{user_id}")
 def delete_admin_user(user_id: int, user: dict = Depends(get_current_user_local)):
-    if not user.get("isAdmin"):
-        raise HTTPException(status_code=403, detail="Admin authorization required")
+    is_admin = user.get("isAdmin") or user.get("role") == "admin"
+    is_lead = user.get("role") == "lead"
+    if not is_admin and not is_lead:
+        raise HTTPException(status_code=403, detail="Admin or Lead authorization required")
     
     conn = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT email FROM users WHERE id = %s;", (user_id,))
+        cur.execute("SELECT email, role FROM users WHERE id = %s;", (user_id,))
         row = cur.fetchone()
-        if row:
-            email = row[0]
-            cur.execute("DELETE FROM system_admins WHERE email = %s;", (email,))
-            cur.execute("DELETE FROM leads WHERE email = %s;", (email,))
-            cur.execute("DELETE FROM user_clients WHERE user_id = %s;", (user_id,))
-            cur.execute("DELETE FROM users WHERE id = %s;", (user_id,))
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        email = row[0]
+        role = row[1]
+        
+        if is_lead:
+            lead_email = user.get("email") or ""
+            lead_domain = lead_email.split("@")[-1].lower() if "@" in lead_email else ""
+            email_domain = email.split("@")[-1].lower() if email and "@" in email else ""
+            if not lead_domain or lead_domain != email_domain:
+                raise HTTPException(status_code=403, detail="Lead users can only delete users within their own email domain")
+            if role in ['admin', 'lead']:
+                raise HTTPException(status_code=403, detail="Lead users cannot delete admin or lead accounts")
+                
+        cur.execute("DELETE FROM system_admins WHERE email = %s;", (email,))
+        cur.execute("DELETE FROM leads WHERE email = %s;", (email,))
+        cur.execute("DELETE FROM user_clients WHERE user_id = %s;", (user_id,))
+        cur.execute("DELETE FROM users WHERE id = %s;", (user_id,))
         conn.commit()
         return {"status": "success"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@router.post("/auth/change-password")
+def change_user_password(req: ChangePasswordRequest, user: dict = Depends(get_current_user_local)):
+    username = user.get("username")
+    if not username:
+        raise HTTPException(status_code=401, detail="Authentication required")
+        
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, hashed_password FROM users WHERE username = %s;", (username,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="User not found")
+        user_id, hashed_password = row
+        
+        import bcrypt
+        if not bcrypt.checkpw(req.current_password.encode('utf-8'), hashed_password.encode('utf-8')):
+            raise HTTPException(status_code=400, detail="Incorrect current password")
+            
+        new_hashed = bcrypt.hashpw(req.new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        cur.execute("UPDATE users SET hashed_password = %s WHERE id = %s;", (new_hashed, user_id))
+        conn.commit()
+        return {"status": "success", "message": "Password updated successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@router.post("/auth/profile-pic")
+def update_profile_pic(req: ProfilePicRequest, user: dict = Depends(get_current_user_local)):
+    username = user.get("username")
+    if not username:
+        raise HTTPException(status_code=401, detail="Authentication required")
+        
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET profile_pic = %s WHERE username = %s;", (req.profile_pic, username))
+        conn.commit()
+        return {"status": "success", "profile_pic": req.profile_pic}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -2722,11 +3018,12 @@ def delete_ticket_comment(ticket_id: int, comment_id: int, user: dict = Depends(
 # ==============================================================================
 
 @router.get("/admin/ticket-agents")
-def get_ticket_agents():
+def get_ticket_agents(user: dict = Depends(get_current_user_local)):
     conn = get_connection()
     try:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("SELECT * FROM ticket_agents ORDER BY name;")
+        # Fetch system users (roles 'user', 'admin', 'lead')
+        cur.execute("SELECT id, username as name, email FROM users WHERE role IN ('user', 'admin', 'lead') ORDER BY username;")
         rows = cur.fetchall()
         return {"agents": rows}
     except Exception as e:
@@ -3513,7 +3810,10 @@ def check_client_user_chat_restriction(message: str, user: dict) -> tuple[bool, 
         if assigned_techs:
             cur.execute("""
                 SELECT DISTINCT client_name, server_name FROM admin_clients 
-                WHERE LOWER(TRIM(db_type)) = ANY(%s);
+                WHERE EXISTS (
+                    SELECT 1 FROM unnest(string_to_array(REPLACE(LOWER(db_type), ' ', ''), ',')) AS t 
+                    WHERE t = ANY(%s)
+                );
             """, (assigned_techs,))
             for r in cur.fetchall():
                 if r[0]: allowed_client_names.add(r[0].lower().strip())
@@ -3595,7 +3895,11 @@ def check_client_and_tech_permission(client_name: str, user: dict, cur) -> bool:
     if assigned_techs:
         cur.execute("""
             SELECT id FROM admin_clients 
-            WHERE (LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) OR LOWER(TRIM(server_name)) = LOWER(TRIM(%s))) AND LOWER(TRIM(db_type)) = ANY(%s);
+            WHERE (LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) OR LOWER(TRIM(server_name)) = LOWER(TRIM(%s))) 
+              AND EXISTS (
+                  SELECT 1 FROM unnest(string_to_array(REPLACE(LOWER(db_type), ' ', ''), ',')) AS t 
+                  WHERE t = ANY(%s)
+              );
         """, (client_name, client_name, assigned_techs))
         if cur.fetchone():
             return True
@@ -4362,7 +4666,11 @@ def get_telemetry_clients(user: dict = Depends(get_current_user_local)):
                 assigned_techs = [t.lower().strip() for t in user.get("assigned_techs", [])]
                 if assigned_techs:
                     cur.execute("""
-                        SELECT DISTINCT server_name FROM admin_clients WHERE LOWER(TRIM(db_type)) = ANY(%s);
+                        SELECT DISTINCT server_name FROM admin_clients 
+                        WHERE EXISTS (
+                            SELECT 1 FROM unnest(string_to_array(REPLACE(LOWER(db_type), ' ', ''), ',')) AS t 
+                            WHERE t = ANY(%s)
+                        );
                     """, (assigned_techs,))
                     allowed_servers = [r[0] for r in cur.fetchall() if r[0]]
                     if allowed_servers:
@@ -5099,7 +5407,11 @@ def get_utilization_servers_summary(client_name: str = None, user: dict = Depend
                 assigned_techs = [t.lower().strip() for t in user.get("assigned_techs", [])]
                 if assigned_techs:
                     cur.execute("""
-                        SELECT DISTINCT server_name FROM admin_clients WHERE LOWER(TRIM(db_type)) = ANY(%s);
+                        SELECT DISTINCT server_name FROM admin_clients 
+                        WHERE EXISTS (
+                            SELECT 1 FROM unnest(string_to_array(REPLACE(LOWER(db_type), ' ', ''), ',')) AS t 
+                            WHERE t = ANY(%s)
+                        );
                     """, (assigned_techs,))
                     allowed_servers = [r["server_name"] for r in cur.fetchall() if r["server_name"]]
                     

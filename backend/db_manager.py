@@ -31,7 +31,7 @@ def get_alert_contacts(cursor, client_name, db_type):
                 SELECT client_email, phone_number 
                 FROM admin_clients 
                 WHERE LOWER(TRIM(client_name)) = LOWER(TRIM(%s)) 
-                  AND LOWER(TRIM(db_type)) = LOWER(TRIM(%s))
+                  AND LOWER(TRIM(%s)) = ANY(string_to_array(REPLACE(LOWER(db_type), ' ', ''), ','))
                 LIMIT 1;
             """, (c_name, d_type))
             row = cursor.fetchone()
