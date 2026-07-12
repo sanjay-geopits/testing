@@ -7,7 +7,9 @@ import psycopg2.pool
 from contextlib import contextmanager
 from core.config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
 
-_pool: psycopg2.pool.ThreadedConnectionPool | None = None
+from typing import Optional
+
+_pool: Optional[psycopg2.pool.ThreadedConnectionPool] = None
 
 
 def init_pool(minconn: int = 2, maxconn: int = 20) -> None:

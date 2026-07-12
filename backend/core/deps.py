@@ -8,10 +8,12 @@ from core.database import get_db
 from core.security import decode_access_token
 import psycopg2.extras
 
+from typing import Optional
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
-def _resolve_user_from_token(token: str | None, conn) -> dict:
+def _resolve_user_from_token(token: Optional[str], conn) -> dict:
     """Decode JWT and load user record from DB."""
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -39,7 +41,7 @@ def _resolve_user_from_token(token: str | None, conn) -> dict:
 
 
 def get_current_user(
-    token: str | None = Depends(oauth2_scheme),
+    token: Optional[str] = Depends(oauth2_scheme),
 ) -> dict:
     """Auth dependency — any authenticated user."""
     from core.database import get_connection
@@ -57,7 +59,7 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
-def get_client_user(request: Request, token: str | None = Depends(oauth2_scheme)) -> dict:
+def get_client_user(request: Request, token: Optional[str] = Depends(oauth2_scheme)) -> dict:
     """Auth dependency — accepts both internal JWT and cookie-based session."""
     from core.database import get_connection
     # Prefer header token, fall back to session cookie

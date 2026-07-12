@@ -841,50 +841,50 @@ ALLOWED_NETWORKS_CONFIG = os.getenv("ALLOWED_IP_NETWORKS", DEFAULT_ALLOWED).spli
 
 @app.middleware("http")
 async def network_restriction_middleware(request: Request, call_next):
-    client_ip_str = "127.0.0.1"
-    if request.client:
-        client_ip_str = request.client.host
-        
+    # When client info is unavailable (e.g. internal health checks), pass through
+    if not request.client:
+        return await call_next(request)
+
+    client_ip_str = request.client.host
+
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
         client_ip_str = forwarded.split(",")[0].strip()
-        
+
     try:
         # Normalize localhost string to IP address if passed
         if client_ip_str == "localhost":
             client_ip_str = "127.0.0.1"
-            
+
         client_ip = ip_address(client_ip_str)
-        
-        # Allow loopback and all private local IP networks (like 192.168.x.x, 10.x.x.x, 172.16.x.x) for seamless local dev/testing
+
+        # Allow loopback and all private local IP networks (like 192.168.x.x, 10.x.x.x, 172.16.x.x)
         if client_ip.is_loopback or client_ip.is_private:
             return await call_next(request)
-            
+
         is_allowed = False
         for network_str in ALLOWED_NETWORKS_CONFIG:
             net_str = network_str.strip().replace("[", "").replace("]", "")
-            if not net_str: continue
-            
-            # Skip non-IP network configurations like 'localhost' which fail in ip_network()
+            if not net_str:
+                continue
             if net_str == "localhost":
                 continue
-                
             try:
                 if client_ip in ip_network(net_str):
                     is_allowed = True
                     break
             except ValueError:
                 continue
-                
+
         if not is_allowed:
             print(f"SECURITY DENIED: {client_ip_str} tried to access {request.url.path}")
             return JSONResponse(
-                status_code=403, 
+                status_code=403,
                 content={"detail": f"GeoPITS Security: Your IP ({client_ip_str}) is not authorized. Access is restricted to trusted office networks."}
             )
     except Exception as e:
         print(f"IP Filter Error identifying client: {e}")
-        # Fallback to local bypass for safety in local execution environments to prevent blocking
+        # Fallback: allow through so valid traffic isn't blocked
         return await call_next(request)
 
     return await call_next(request)
