@@ -1500,7 +1500,7 @@ def check_and_trigger_uptime_alerts(cur, client, server, db_type, svc, restart_d
     cc_emails = None
 
     try:
-        from routes import send_email_outlook
+        from services.email_service import send_email_outlook
     except Exception as e:
         print(f"Error importing send_email_outlook: {e}")
         return
@@ -1708,7 +1708,7 @@ def check_and_trigger_uptime_alerts(cur, client, server, db_type, svc, restart_d
 # =====================================================================
 def process_mail(item, override_client=None, override_server=None, override_db=None, override_log_type=None):
     try:
-        from routes import send_email_outlook
+        from services.email_service import send_email_outlook
     except Exception as e:
         print(f"Error importing send_email_outlook in process_mail: {e}")
     subject=item.subject

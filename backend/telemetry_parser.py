@@ -215,7 +215,7 @@ def trigger_combined_growth_alert(cursor, client_name, db_type, db_changes, tabl
         return
 
     try:
-        from routes import send_email_outlook
+        from services.email_service import send_email_outlook
     except Exception as e:
         print(f"[ALERT DAEMON] Error importing send_email_outlook: {e}")
         return
@@ -389,7 +389,7 @@ def trigger_combined_growth_alert(cursor, client_name, db_type, db_changes, tabl
 
 def trigger_growth_alert(cursor, client_name, db_type, db_name, item_name, old_size_bytes, new_size_bytes, captured_date, is_table=False):
     try:
-        from routes import send_email_outlook
+        from services.email_service import send_email_outlook
     except Exception as e:
         print(f"[ALERT DAEMON] Error importing send_email_outlook: {e}")
         return
