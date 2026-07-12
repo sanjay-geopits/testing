@@ -1,620 +1,462 @@
+"""
+GeoMon Database Schema — Canonical Migrations
+=============================================
+Single source of truth for ALL table creation and index definitions.
+Safe to re-run on an existing database (all statements are idempotent).
+"""
 import os
 import psycopg2
-from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
 
-class PooledConnectionProxy:
-    def __init__(self, conn, pool):
-        self._conn = conn
-        self._pool = pool
-        
-    def close(self):
-        if self._conn and self._pool:
-            try:
-                self._conn.rollback()
-            except Exception:
-                pass
-            try:
-                self._pool.putconn(self._conn)
-            except Exception:
-                try:
-                    self._conn.close()
-                except Exception:
-                    pass
-            self._conn = None
-            self._pool = None
-        elif self._conn:
-            try:
-                self._conn.close()
-            except Exception:
-                pass
-            self._conn = None
 
-    def __enter__(self):
-        self._conn.__enter__()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        return self._conn.__exit__(exc_type, exc_val, exc_tb)
-
-    def __getattr__(self, name):
-        return getattr(self._conn, name)
-
-_cached_pwd = None
-
-def get_connection():
-    global _cached_pwd
-    
-    # 1. Attempt to reuse connection pool from app.py to eliminate TCP overhead
-    try:
-        import sys
-        db_pool = None
-        if 'backend.app' in sys.modules:
-            db_pool = getattr(sys.modules['backend.app'], 'db_pool', None)
-        if not db_pool and 'app' in sys.modules:
-            db_pool = getattr(sys.modules['app'], 'db_pool', None)
-            
-        if db_pool is not None:
-            conn = db_pool.getconn()
-            return PooledConnectionProxy(conn, db_pool)
-    except Exception:
-        pass
-
-    host = os.getenv("DB_HOST", "localhost")
-    database = os.getenv("DB_NAME", "geovexsight")
-    user = os.getenv("DB_USER", "postgres")
-    port = os.getenv("DB_PORT", "5432")
-    
-    # Fast path: check cached successful password first
-    if _cached_pwd is not None:
-        try:
-            return psycopg2.connect(
-                host=host,
-                database=database,
-                user=user,
-                password=_cached_pwd,
-                port=port
-            )
-        except Exception:
-            _cached_pwd = None
-
-    passwords = []
-    env_pwd = os.getenv("DB_PASSWORD")
-    if env_pwd:
-        passwords.append(env_pwd)
-    passwords.extend(["y7UMhWmLcqSJzmhTGDyK", "geopitsaidata", "postgres"])
-    
-    for pwd in passwords:
-        try:
-            conn = psycopg2.connect(
-                host=host,
-                database=database,
-                user=user,
-                password=pwd,
-                port=port
-            )
-            _cached_pwd = pwd  # Cache the successful password
-            return conn
-        except Exception:
-            continue
-            
+def _get_connection():
+    """Bootstrap connection (used before the pool is available)."""
     return psycopg2.connect(
-        host=host,
-        database=database,
-        user=user,
-        port=port
+        host=os.getenv("DB_HOST", "localhost"),
+        port=os.getenv("DB_PORT", "5432"),
+        database=os.getenv("DB_NAME", "geovexsight"),
+        user=os.getenv("DB_USER", "postgres"),
+        password=os.getenv("DB_PASSWORD", "2025"),
     )
 
-def run_migrations():
-    print("Running database migrations for new features...")
-    conn = None
+
+def get_connection():
+    from core.database import get_connection as get_db_conn
+    return get_db_conn()
+
+
+def run_migrations() -> None:
+    """Apply all schema migrations. Called once at app startup."""
+    print("[MIGRATIONS] Applying schema...")
+    conn = _get_connection()
+    cur = conn.cursor()
     try:
-        conn = get_connection()
-        cur = conn.cursor()
-        
-        # 1. Create essential telemetry logging tables if they do not exist
+        # ── Authentication & Users (4 tables) ────────────────────
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS db_monitoring_logs (
-                id SERIAL PRIMARY KEY,
-                client_name TEXT,
-                server_name TEXT,
-                db_type TEXT,
-                log_type TEXT,
-                log_source TEXT,
-                log_time TIMESTAMP,
-                log_time_utc TIMESTAMP,
-                log_time_ist TIMESTAMP,
-                log_message TEXT,
-                occurrence_count INTEGER DEFAULT 1,
-                raw_log JSONB,
-                email_subject TEXT,
-                email_received_time TIMESTAMP,
-                log_hash TEXT UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status TEXT DEFAULT '',
-                owner TEXT DEFAULT '',
-                client_visibility TEXT DEFAULT '',
-                ticket_status TEXT DEFAULT '',
-                next_action TEXT DEFAULT '',
-                severity TEXT,
-                status_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS db_archived_logs (
-                id SERIAL PRIMARY KEY,
-                client_name TEXT,
-                server_name TEXT,
-                db_type TEXT,
-                log_type TEXT,
-                log_source TEXT,
-                log_time TIMESTAMP,
-                log_time_utc TIMESTAMP,
-                log_time_ist TIMESTAMP,
-                log_message TEXT,
-                occurrence_count INTEGER DEFAULT 1,
-                raw_log JSONB,
-                email_subject TEXT,
-                email_received_time TIMESTAMP,
-                log_hash TEXT UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status TEXT DEFAULT '',
-                owner TEXT DEFAULT '',
-                client_visibility TEXT DEFAULT '',
-                ticket_status TEXT DEFAULT '',
-                next_action TEXT DEFAULT '',
-                severity TEXT,
-                status_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS share_history (
-                id SERIAL PRIMARY KEY,
-                username TEXT,
-                notes TEXT,
-                platform TEXT,
-                content_type TEXT,
-                client_name TEXT,
-                server_name TEXT,
-                log_message TEXT,
-                status TEXT,
-                owner TEXT,
-                client_visibility TEXT,
-                ticket_status TEXT,
-                next_action TEXT,
-                db_type TEXT,
-                shared_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS users (
+                id              SERIAL PRIMARY KEY,
+                username        VARCHAR(50)  NOT NULL UNIQUE,
+                hashed_password VARCHAR(255) NOT NULL,
+                role            VARCHAR(50)  NOT NULL DEFAULT 'user',
+                full_name       VARCHAR(255),
+                email           VARCHAR(255),
+                profile_pic     TEXT,
+                last_active_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
-        # 2. Recreate Tickets Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS tickets (
-                id SERIAL PRIMARY KEY,
-                business_unit TEXT,
-                company TEXT,
-                contact TEXT,
-                ticket_name TEXT,
-                category TEXT,
-                status TEXT DEFAULT 'OPEN',
-                priority TEXT DEFAULT 'Medium',
-                agent TEXT,
-                description TEXT,
-                created_by TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        # 3. Client Reports Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS client_reports (
-                id SERIAL PRIMARY KEY,
-                client_name TEXT,
-                title TEXT,
-                month TEXT,
-                year TEXT,
-                file_name TEXT,
-                file_data TEXT, -- Base64 encoded document data
-                notes TEXT,
-                uploaded_by TEXT,
-                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        # 4. User Page Activity if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS user_page_activity (
-                id SERIAL PRIMARY KEY,
-                username TEXT,
-                page_path TEXT,
-                duration_seconds INTEGER DEFAULT 0,
-                last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uq_user_page UNIQUE (username, page_path)
-            );
-        """)
-        
-        # 5. Admin Clients Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS admin_clients (
-                id SERIAL PRIMARY KEY,
-                client_name TEXT,
-                db_type TEXT,
-                server_name TEXT,
-                client_email TEXT,
-                phone_number TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-
-        # 5b. Client Access Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS client_access (
-                id SERIAL PRIMARY KEY,
-                client_email VARCHAR(255) NOT NULL,
-                technology VARCHAR(100) NOT NULL,
-                client_name VARCHAR(100) NOT NULL,
-                server_name VARCHAR(100) NOT NULL,
-                status VARCHAR(20) DEFAULT 'enabled',
-                phone_number VARCHAR(100),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-
-        # Alter existing tables to add columns if they do not exist
-        cur.execute("ALTER TABLE db_monitoring_logs ADD COLUMN IF NOT EXISTS ticket_id INTEGER;")
-        cur.execute("ALTER TABLE db_archived_logs ADD COLUMN IF NOT EXISTS ticket_id INTEGER;")
-        cur.execute("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolved_by TEXT;")
-        cur.execute("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP;")
-
-        # ======================================================================
-        # PRODUCTION-GRADE SCHEMA HARDENING: Unique Constraints & Indexes
-        # Idempotent — safe to run on both fresh and existing databases.
-        # ======================================================================
-
-        # 1. users table: enforce unique email (prevents duplicate OAuth / manual registrations)
-        cur.execute("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_indexes 
-                    WHERE tablename = 'users' AND indexname = 'uq_users_email'
-                ) THEN
-                    CREATE UNIQUE INDEX uq_users_email ON users (LOWER(email))
-                    WHERE email IS NOT NULL;
-                END IF;
-            END $$;
-        """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users (LOWER(email));")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_role ON users (role);")
-
-        # 2. admin_clients table: prevent duplicate (client_name, db_type, server_name) tuples
-        cur.execute("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint
-                    WHERE conrelid = 'admin_clients'::regclass AND conname = 'uq_admin_clients_combo'
-                ) THEN
-                    ALTER TABLE admin_clients
-                    ADD CONSTRAINT uq_admin_clients_combo
-                    UNIQUE (client_name, db_type, server_name);
-                END IF;
-            END $$;
-        """)
-
-        # 3. client_access table: prevent duplicate access grants per email+tech+client+server
-        cur.execute("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_constraint
-                    WHERE conrelid = 'client_access'::regclass AND conname = 'uq_client_access_combo'
-                ) THEN
-                    ALTER TABLE client_access
-                    ADD CONSTRAINT uq_client_access_combo
-                    UNIQUE (client_email, technology, client_name, server_name);
-                END IF;
-            END $$;
-        """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_client_access_combo ON client_access (LOWER(client_email), LOWER(technology), client_name);")
-
-        # 4. notifications: index for fast per-user lookup
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_notifications_username ON notifications (LOWER(username), is_read, created_at DESC);")
-
-        # 5. ticket_comments: index for fast ticket thread fetching
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments (ticket_id, created_at ASC);")
-
-        # 6. leads table: index for fast email-based technology lookups
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_leads_email_lower ON leads (LOWER(email));")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_leads_status ON leads (status, LOWER(email));")
-
-        # 7. users: composite index for login queries
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_login ON users (username, LOWER(email));")
-
-        # 6. Notifications Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS notifications (
-                id SERIAL PRIMARY KEY,
-                username TEXT,
-                message TEXT,
-                is_read BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        # 7. Ticket Agents Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS ticket_agents (
-                id SERIAL PRIMARY KEY,
-                name TEXT UNIQUE
-            );
-        """)
-            
-        # 8. Ticket Business Units Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS ticket_business_units (
-                id SERIAL PRIMARY KEY,
-                name TEXT UNIQUE
-            );
-        """)
-
-        # 9. System Settings Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS system_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-        """)
-        
-        # 10. Feedbacks Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS feedbacks (
-                id SERIAL PRIMARY KEY,
-                username TEXT,
-                email TEXT,
-                feedback_text TEXT,
-                rating INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-
-        # 11. Online Users Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS online_users (
-                id SERIAL PRIMARY KEY,
-                username TEXT UNIQUE,
-                units TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        # 12. Admin Agents Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS admin_agents (
-                id SERIAL PRIMARY KEY,
-                agent_name TEXT,
-                company_name TEXT,
-                business_unit TEXT,
-                technology TEXT,
-                email TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        cur.execute("ALTER TABLE admin_agents ADD COLUMN IF NOT EXISTS email TEXT;")
-        
-        # 13. Ticket Comments/Logs Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS ticket_comments (
-                id SERIAL PRIMARY KEY,
-                ticket_id INTEGER,
-                author TEXT,
-                comment_type TEXT,
-                content TEXT,
-                attachments TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        # 14. Database Size History Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS database_size_history (
-                id SERIAL PRIMARY KEY,
-                server_name VARCHAR(255),
-                database_name VARCHAR(255),
-                total_size_bytes BIGINT,
-                captured_date DATE,
-                CONSTRAINT uq_db_size UNIQUE (server_name, database_name, captured_date)
-            );
-        """)
-        
-        # 15. Table Size History Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS table_size_history (
-                id SERIAL PRIMARY KEY,
-                server_name VARCHAR(255),
-                database_name VARCHAR(255),
-                table_name VARCHAR(255),
-                size_bytes BIGINT,
-                captured_date DATE,
-                CONSTRAINT uq_table_size UNIQUE (server_name, database_name, table_name, captured_date)
-            );
-        """)
-        
-        # 16. User Clients Permission Map Table if not exists
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_clients (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                client_id INTEGER REFERENCES admin_clients(id) ON DELETE CASCADE,
+                id           SERIAL PRIMARY KEY,
+                user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                client_id    INTEGER,
                 access_level VARCHAR(50) DEFAULT 'view',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 CONSTRAINT uq_user_client UNIQUE (user_id, client_id)
             );
         """)
 
-        # 17. Server Utilization History Table if not exists
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS server_utilization_history (
-                id SERIAL PRIMARY KEY,
-                server_name VARCHAR(255),
-                cpu_utilization NUMERIC(5,2),
-                memory_utilization NUMERIC(5,2),
-                disk_utilization NUMERIC(5,2),
-                io_utilization NUMERIC(5,2),
-                read_iops NUMERIC(10,2),
-                write_iops NUMERIC(10,2),
-                captured_at TIMESTAMP,
-                CONSTRAINT uq_server_utilization UNIQUE (server_name, captured_at)
+            CREATE TABLE IF NOT EXISTS user_page_activity (
+                id               SERIAL PRIMARY KEY,
+                username         TEXT,
+                page_path        TEXT,
+                duration_seconds INTEGER DEFAULT 0,
+                last_active_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_user_page UNIQUE (username, page_path)
             );
         """)
-        
-        # 21. Client Alert Settings Table if not exists
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS online_users (
+                id         SERIAL PRIMARY KEY,
+                username   TEXT NOT NULL UNIQUE,
+                units      TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # ── Incident Management (3 tables) ────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tickets (
+                id            SERIAL PRIMARY KEY,
+                business_unit TEXT,
+                company       TEXT,
+                contact       TEXT,
+                ticket_name   TEXT,
+                category      TEXT,
+                status        TEXT DEFAULT 'OPEN',
+                priority      TEXT DEFAULT 'Medium',
+                agent         TEXT,
+                description   TEXT,
+                created_by    TEXT,
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved_by   TEXT,
+                resolved_at   TIMESTAMP
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ticket_comments (
+                id           SERIAL PRIMARY KEY,
+                ticket_id    INTEGER REFERENCES tickets(id) ON DELETE CASCADE,
+                author       TEXT,
+                comment_type TEXT,
+                content      TEXT,
+                attachments  TEXT,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ticket_business_units (
+                id   SERIAL PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE
+            );
+        """)
+
+        # ── Client Configuration (4 tables) ───────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS admin_clients (
+                id           SERIAL PRIMARY KEY,
+                client_name  TEXT NOT NULL,
+                db_type      TEXT NOT NULL,
+                server_name  TEXT NOT NULL,
+                client_email TEXT,
+                phone_number TEXT,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_admin_clients_combo UNIQUE (client_name, db_type, server_name)
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS client_access (
+                id           SERIAL PRIMARY KEY,
+                client_email VARCHAR(255) NOT NULL,
+                technology   VARCHAR(100) NOT NULL,
+                client_name  VARCHAR(100) NOT NULL,
+                server_name  VARCHAR(100) NOT NULL,
+                status       VARCHAR(20)  DEFAULT 'enabled',
+                phone_number VARCHAR(100),
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_client_access_combo
+                    UNIQUE (client_email, technology, client_name, server_name)
+            );
+        """)
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS client_alert_settings (
-                id SERIAL PRIMARY KEY,
-                client_name VARCHAR(255) NOT NULL,
-                db_type VARCHAR(100) NOT NULL,
-                cpu_threshold NUMERIC(5,2) DEFAULT 80.00,
-                memory_threshold NUMERIC(5,2) DEFAULT 80.00,
-                disk_threshold NUMERIC(5,2) DEFAULT 80.00,
-                io_threshold NUMERIC(5,2) DEFAULT 80.00,
-                slow_query_threshold_ms INTEGER DEFAULT 5000,
-                long_running_threshold_sec INTEGER DEFAULT 3600,
-                client_emails TEXT,
-                cc_emails TEXT,
-                server_down_alert BOOLEAN DEFAULT TRUE,
-                critical_error_alert BOOLEAN DEFAULT TRUE,
-                last_summary_sent TIMESTAMP DEFAULT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                id                       SERIAL PRIMARY KEY,
+                client_name              VARCHAR(255) NOT NULL,
+                db_type                  VARCHAR(100) NOT NULL,
+                cpu_threshold            NUMERIC(5,2) DEFAULT 80,
+                memory_threshold         NUMERIC(5,2) DEFAULT 80,
+                disk_threshold           NUMERIC(5,2) DEFAULT 80,
+                io_threshold             NUMERIC(5,2) DEFAULT 80,
+                slow_query_threshold_ms  INTEGER      DEFAULT 5000,
+                long_running_threshold_sec INTEGER     DEFAULT 3600,
+                client_emails            TEXT,
+                cc_emails                TEXT,
+                server_down_alert        BOOLEAN      DEFAULT TRUE,
+                critical_error_alert     BOOLEAN      DEFAULT TRUE,
+                last_summary_sent        TIMESTAMP,
+                created_at               TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
                 CONSTRAINT uq_client_tech UNIQUE (client_name, db_type)
             );
         """)
 
-        # 22. Technology Alerts Config Table
         cur.execute("""
             CREATE TABLE IF NOT EXISTS technology_alerts_config (
-                technology VARCHAR(100) PRIMARY KEY,
+                technology  VARCHAR(100) PRIMARY KEY,
                 alert_email VARCHAR(255) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        
-        # Proactively ensure columns exist for existing databases
-        cur.execute("ALTER TABLE server_utilization_history ADD COLUMN IF NOT EXISTS read_iops NUMERIC(10,2);")
-        cur.execute("ALTER TABLE server_utilization_history ADD COLUMN IF NOT EXISTS write_iops NUMERIC(10,2);")
-        cur.execute("ALTER TABLE admin_clients ADD COLUMN IF NOT EXISTS client_email TEXT;")
-        cur.execute("ALTER TABLE admin_clients ADD COLUMN IF NOT EXISTS phone_number TEXT;")
-        cur.execute("ALTER TABLE client_access ADD COLUMN IF NOT EXISTS phone_number VARCHAR(100);")
-        
-        # 18. Create database indexes for performance optimization
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_db_size_history_lookup ON database_size_history (server_name, database_name, captured_date DESC);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_tbl_size_history_lookup ON table_size_history (server_name, database_name, table_name, captured_date DESC);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_tbl_size_history_heavy ON table_size_history (server_name, database_name, size_bytes DESC);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_db_mon_logs_lookup ON db_monitoring_logs (client_name, server_name, log_time DESC);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_tickets_company ON tickets (company, created_at DESC);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_server_util_lookup ON server_utilization_history (server_name, captured_at DESC);")
-        
-        # New critical performance indexes for high concurrency log lookup & filtering
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_db_mon_logs_ist ON db_monitoring_logs (log_time_ist DESC);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_db_arch_logs_ist ON db_archived_logs (log_time_ist DESC);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_db_mon_logs_hash ON db_monitoring_logs (log_hash);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_db_arch_logs_hash ON db_archived_logs (log_hash);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_db_mon_logs_client_server ON db_monitoring_logs (client_name, server_name);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_db_arch_logs_client_server ON db_archived_logs (client_name, server_name);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_db_mon_logs_composite ON db_monitoring_logs (db_type, client_name, server_name, log_time_ist DESC);")
-        # 19. Report Reviews Table if not exists
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS report_reviews (
-                id SERIAL PRIMARY KEY,
-                report_id INTEGER REFERENCES client_reports(id) ON DELETE CASCADE,
-                username TEXT,
-                rating INTEGER CHECK (rating >= 1 AND rating <= 5),
-                comment TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
-        # 20. DB Uptime History Table if not exists
+        # ── Telemetry & Logs (5 tables) ───────────────────────────
+        # Unified log table — is_archived replaces db_archived_logs
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS db_monitoring_logs (
+                id                  BIGSERIAL PRIMARY KEY,
+                client_name         TEXT        NOT NULL,
+                server_name         TEXT        NOT NULL,
+                db_type             TEXT        NOT NULL,
+                log_type            TEXT        NOT NULL,
+                log_source          TEXT,
+                log_time            TIMESTAMP,
+                log_time_utc        TIMESTAMP,
+                log_time_ist        TIMESTAMP,
+                log_level           TEXT,
+                log_message         TEXT,
+                occurrence_count    INTEGER     DEFAULT 1,
+                raw_log             JSONB,
+                email_subject       TEXT,
+                email_received_time TIMESTAMP,
+                log_hash            TEXT        UNIQUE,
+                severity            VARCHAR(50),
+                status              VARCHAR(100) DEFAULT '',
+                owner               VARCHAR(100) DEFAULT '',
+                client_visibility   VARCHAR(100) DEFAULT '',
+                ticket_status       VARCHAR(100) DEFAULT '',
+                next_action         TEXT         DEFAULT '',
+                is_archived         BOOLEAN      DEFAULT FALSE,
+                is_semantic         BOOLEAN      DEFAULT FALSE,
+                semantic_count      INTEGER      DEFAULT 1,
+                semantic_hash       TEXT,
+                time_bucket         TEXT,
+                ticket_id           INTEGER,
+                status_updated_at   TIMESTAMPTZ,
+                created_at          TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS db_uptime_history (
-                id SERIAL PRIMARY KEY,
-                client_name VARCHAR(255),
-                server_name VARCHAR(255),
-                db_type VARCHAR(100) DEFAULT 'MSSQL',
-                service_name VARCHAR(255),
-                status VARCHAR(100),
-                uptime_desc VARCHAR(255),
+                id               SERIAL PRIMARY KEY,
+                client_name      VARCHAR(255),
+                server_name      VARCHAR(255),
+                db_type          VARCHAR(100) DEFAULT 'MSSQL',
+                service_name     VARCHAR(255),
+                status           VARCHAR(100),
+                uptime_desc      VARCHAR(255),
                 last_restart_time TIMESTAMP,
-                captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                captured_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 CONSTRAINT uq_db_uptime UNIQUE (client_name, server_name, service_name, captured_at)
             );
         """)
-        
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_db_uptime_history_lookup ON db_uptime_history (client_name, server_name, captured_at DESC);")
-        cur.execute("ALTER TABLE report_reviews ADD COLUMN IF NOT EXISTS mom TEXT;")
 
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS processed_emails (
-                message_id VARCHAR(500) PRIMARY KEY,
-                subject VARCHAR(500),
-                sender VARCHAR(255),
-                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                received_at TIMESTAMP
+            CREATE TABLE IF NOT EXISTS database_size_history (
+                id             SERIAL PRIMARY KEY,
+                server_name    VARCHAR(255),
+                database_name  VARCHAR(255),
+                total_size_bytes BIGINT,
+                captured_date  DATE,
+                CONSTRAINT uq_db_size UNIQUE (server_name, database_name, captured_date)
             );
         """)
-        cur.execute("ALTER TABLE processed_emails ADD COLUMN IF NOT EXISTS received_at TIMESTAMP;")
 
-        # MSSQL Diagnostic and Report telemetry tables
-        mssql_tables = [
-            "reportdata_restart",
-            "reportdata_backup",
-            "reportdata_server",
-            "reportdata_disk_drive",
-            "reportdata_size_growth",
-            "reportdata_top_cpu",
-            "diagnosticdata_disk_io",
-            "diagnosticdata_wait_stats",
-            "diagnosticdata_long_queries",
-            "diagnosticdata_deadlocks",
-            "diagnosticdata_tempdb",
-            "diagnosticdata_job_executions",
-            "diagnosticdata_blocking",
-            "diagnosticdata_error_logs",
-            "diagnosticdata_cpu_querystore",
-            "diagnosticdata_mem_querystore",
-            "reportdata_memory_ple",
-            "reportdata_memory_snapshot",
-            "reportdata_cpu_daily_summary",
-            "reportdata_cpu_spike_analysis"
-        ]
-        for tbl in mssql_tables:
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS {tbl} (
-                    id SERIAL PRIMARY KEY,
-                    client_name VARCHAR(255) NOT NULL,
-                    server_name VARCHAR(255) NOT NULL,
-                    captured_at TIMESTAMP NOT NULL,
-                    raw_data JSONB,
-                    log_hash VARCHAR(255),
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    CONSTRAINT uq_{tbl}_hash UNIQUE (log_hash)
-                );
-            """)
-            cur.execute(f"CREATE INDEX IF NOT EXISTS idx_{tbl}_captured ON {tbl} (client_name, server_name, captured_at DESC);")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS table_size_history (
+                id             SERIAL PRIMARY KEY,
+                server_name    VARCHAR(255),
+                database_name  VARCHAR(255),
+                table_name     VARCHAR(255),
+                size_bytes     BIGINT,
+                captured_date  DATE,
+                CONSTRAINT uq_table_size UNIQUE (server_name, database_name, table_name, captured_date)
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS server_utilization_history (
+                id                 SERIAL PRIMARY KEY,
+                server_name        VARCHAR(255),
+                cpu_utilization    NUMERIC(5,2),
+                memory_utilization NUMERIC(5,2),
+                disk_utilization   NUMERIC(5,2),
+                io_utilization     NUMERIC(5,2),
+                read_iops          NUMERIC(10,2),
+                write_iops         NUMERIC(10,2),
+                captured_at        TIMESTAMP,
+                CONSTRAINT uq_server_utilization UNIQUE (server_name, captured_at)
+            );
+        """)
+
+        # ── Ingestion Control (2 tables) ──────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS processed_emails (
+                message_id   VARCHAR(500) PRIMARY KEY,
+                subject      VARCHAR(500),
+                sender       VARCHAR(255),
+                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                received_at  TIMESTAMP
+            );
+        """)
+
+        # Unified telemetry records (replaces 20 reportdata_*/diagnosticdata_* tables)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS telemetry_records (
+                id          SERIAL PRIMARY KEY,
+                report_type VARCHAR(100) NOT NULL,
+                client_name VARCHAR(255) NOT NULL,
+                server_name VARCHAR(255) NOT NULL,
+                captured_at TIMESTAMP   NOT NULL,
+                raw_data    JSONB,
+                log_hash    VARCHAR(255),
+                created_at  TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_telemetry_hash UNIQUE (log_hash)
+            );
+        """)
+
+        # ── Reports & Feedback (3 tables) ─────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS client_reports (
+                id          SERIAL PRIMARY KEY,
+                client_name TEXT,
+                title       TEXT,
+                month       TEXT,
+                year        TEXT,
+                file_name   TEXT,
+                file_data   TEXT,
+                notes       TEXT,
+                uploaded_by TEXT,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS report_reviews (
+                id        SERIAL PRIMARY KEY,
+                report_id INTEGER REFERENCES client_reports(id) ON DELETE CASCADE,
+                username  TEXT,
+                rating    INTEGER CHECK (rating >= 1 AND rating <= 5),
+                comment   TEXT,
+                mom       TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS feedbacks (
+                id            SERIAL PRIMARY KEY,
+                username      TEXT,
+                email         TEXT,
+                feedback_text TEXT,
+                rating        INTEGER,
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # ── System (4 tables) ─────────────────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS system_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS leads (
+                id         SERIAL PRIMARY KEY,
+                email      VARCHAR(255),
+                technology VARCHAR(100),
+                is_lead    BOOLEAN DEFAULT TRUE,
+                status     VARCHAR(50) DEFAULT 'active'
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS notifications (
+                id         SERIAL PRIMARY KEY,
+                username   TEXT,
+                message    TEXT,
+                is_read    BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS admin_agents (
+                id            SERIAL PRIMARY KEY,
+                agent_name    TEXT,
+                company_name  TEXT,
+                business_unit TEXT,
+                technology    TEXT,
+                email         TEXT,
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # ── Schema Evolution (ADD COLUMN IF NOT EXISTS) ───────────
+        _safe_alters(cur)
+
+        # ── Indexes ───────────────────────────────────────────────
+        _create_indexes(cur)
 
         conn.commit()
-        print("Database migrations applied successfully!")
+        print("[MIGRATIONS] ✅ Schema applied successfully.")
     except Exception as e:
-        print("Error executing database migrations:", e)
-        if conn:
-            conn.rollback()
+        conn.rollback()
+        print(f"[MIGRATIONS] ❌ Error: {e}")
+        raise
     finally:
-        if conn:
-            conn.close()
+        cur.close()
+        conn.close()
+
+
+def _safe_alters(cur) -> None:
+    """Idempotent column additions for existing databases."""
+    alters = [
+        "ALTER TABLE server_utilization_history ADD COLUMN IF NOT EXISTS read_iops NUMERIC(10,2);",
+        "ALTER TABLE server_utilization_history ADD COLUMN IF NOT EXISTS write_iops NUMERIC(10,2);",
+        "ALTER TABLE admin_clients ADD COLUMN IF NOT EXISTS client_email TEXT;",
+        "ALTER TABLE admin_clients ADD COLUMN IF NOT EXISTS phone_number TEXT;",
+        "ALTER TABLE client_access ADD COLUMN IF NOT EXISTS phone_number VARCHAR(100);",
+        "ALTER TABLE db_monitoring_logs ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE db_monitoring_logs ADD COLUMN IF NOT EXISTS is_semantic BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE db_monitoring_logs ADD COLUMN IF NOT EXISTS semantic_count INTEGER DEFAULT 1;",
+        "ALTER TABLE db_monitoring_logs ADD COLUMN IF NOT EXISTS semantic_hash TEXT;",
+        "ALTER TABLE db_monitoring_logs ADD COLUMN IF NOT EXISTS time_bucket TEXT;",
+        "ALTER TABLE db_monitoring_logs ADD COLUMN IF NOT EXISTS ticket_id INTEGER;",
+        "ALTER TABLE db_monitoring_logs ADD COLUMN IF NOT EXISTS log_level TEXT;",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolved_by TEXT;",
+        "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP;",
+        "ALTER TABLE report_reviews ADD COLUMN IF NOT EXISTS mom TEXT;",
+        "ALTER TABLE processed_emails ADD COLUMN IF NOT EXISTS received_at TIMESTAMP;",
+        "ALTER TABLE admin_agents ADD COLUMN IF NOT EXISTS email TEXT;",
+    ]
+    for sql in alters:
+        try:
+            cur.execute(sql)
+        except Exception:
+            pass  # Column already exists
+
+
+def _create_indexes(cur) -> None:
+    """Create all performance indexes (idempotent)."""
+    indexes = [
+        # users
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (LOWER(email)) WHERE email IS NOT NULL;",
+        "CREATE INDEX IF NOT EXISTS idx_users_email ON users (LOWER(email));",
+        "CREATE INDEX IF NOT EXISTS idx_users_role ON users (role);",
+        "CREATE INDEX IF NOT EXISTS idx_users_login ON users (username, LOWER(email));",
+        # db_monitoring_logs
+        "CREATE INDEX IF NOT EXISTS idx_db_mon_logs_ist ON db_monitoring_logs (log_time_ist DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_db_mon_logs_hash ON db_monitoring_logs (log_hash);",
+        "CREATE INDEX IF NOT EXISTS idx_db_mon_logs_client_server ON db_monitoring_logs (client_name, server_name);",
+        "CREATE INDEX IF NOT EXISTS idx_db_mon_logs_composite ON db_monitoring_logs (db_type, client_name, server_name, log_time_ist DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_db_mon_logs_archived ON db_monitoring_logs (is_archived, log_time_ist DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_db_mon_logs_severity ON db_monitoring_logs (severity, log_time_ist DESC);",
+        # tickets
+        "CREATE INDEX IF NOT EXISTS idx_tickets_company ON tickets (company, created_at DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets (status, created_at DESC);",
+        # ticket_comments
+        "CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments (ticket_id, created_at ASC);",
+        # notifications
+        "CREATE INDEX IF NOT EXISTS idx_notifications_username ON notifications (LOWER(username), is_read, created_at DESC);",
+        # leads
+        "CREATE INDEX IF NOT EXISTS idx_leads_email_lower ON leads (LOWER(email));",
+        # client_access
+        "CREATE INDEX IF NOT EXISTS idx_client_access_combo ON client_access (LOWER(client_email), LOWER(technology), client_name);",
+        # telemetry_records
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_client_server ON telemetry_records (client_name, server_name, captured_at DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_type ON telemetry_records (report_type, captured_at DESC);",
+        # sizing history
+        "CREATE INDEX IF NOT EXISTS idx_db_size_history_lookup ON database_size_history (server_name, database_name, captured_date DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_tbl_size_history_lookup ON table_size_history (server_name, database_name, table_name, captured_date DESC);",
+        "CREATE INDEX IF NOT EXISTS idx_server_util_lookup ON server_utilization_history (server_name, captured_at DESC);",
+        # uptime
+        "CREATE INDEX IF NOT EXISTS idx_db_uptime_history_lookup ON db_uptime_history (client_name, server_name, captured_at DESC);",
+    ]
+    for sql in indexes:
+        try:
+            cur.execute(sql)
+        except Exception:
+            pass  # Index already exists
+
 
 if __name__ == "__main__":
     run_migrations()

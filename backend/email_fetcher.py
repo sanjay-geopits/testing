@@ -26,34 +26,37 @@ from subject_parser import parse_subject, parse_time
 
 logger = logging.getLogger(__name__)
 
-# Category mapping
-_REPORT_CATEGORIES = [
-    (["CPU Utilization"],                                     "cpu",          None),
-    (["Memory Utilization"],                                  "memory",       None),
-    (["Restart Evidence"],                                    "restart",      "reportdata_restart"),
-    (["Backup Execution"],                                    "backup",       "reportdata_backup"),
-    (["Configuration Report"],                                "server",       "reportdata_server"),
-    (["Disk Drive Usage"],                                    "disk_drive",   "reportdata_disk_drive"),
-    (["Size Growth Report", "Size & Grow", "Month Growth"],   "size_growth",  "reportdata_size_growth"),
-    (["Top 5 CPU Queries", "Top CPU"],                        "top_cpu",      "reportdata_top_cpu"),
-    (["Memory PLE"],                                          "memory_ple",   "reportdata_memory_ple"),
-    (["Memory Snapshot"],                                     "memory_snapshot", "reportdata_memory_snapshot"),
-    (["CPU Daily Summary"],                                   "cpu_daily_summary", "reportdata_cpu_daily_summary"),
-    (["CPU Spike Analysis"],                                  "cpu_spike_analysis", "reportdata_cpu_spike_analysis"),
-]
-
-_DIAG_CATEGORIES = [
-    (["Disk IO Latency", "Disk IO RCA", "Weekly Disk IO"], "disk_io", "diagnosticdata_disk_io"),
-    (["Wait Statistics", "Wait Stats"], "wait_stats", "diagnosticdata_wait_stats"),
-    (["Long Running Queries"], "long_queries", "diagnosticdata_long_queries"),
-    (["Deadlock"], "deadlocks", "diagnosticdata_deadlocks"),
-    (["TempDB Usage"], "tempdb", "diagnosticdata_tempdb"),
-    (["Agent Job", "Job Failure"], "job_executions", "diagnosticdata_job_executions"),
-    (["Blocking Sessions"], "blocking", "diagnosticdata_blocking"),
-    (["Error Logs"], "error_logs", "diagnosticdata_error_logs"),
-    (["Top 10 CPU - Query Store", "Top 10 CPU Queries (IST)"], "cpu_querystore", "diagnosticdata_cpu_querystore"),
+# Category mapping — report_type values stored in unified telemetry_records table
+# Format: (keywords_list, log_type_slug, report_type_value)
+# log_type_slug is used internally; report_type_value is stored in telemetry_records.report_type
+# None report_type = utilization-only records (cpu/memory) → server_utilization_history
+_ALL_CATEGORIES = [
+    (["CPU Utilization"],                                                          "cpu",              None),
+    (["Memory Utilization"],                                                       "memory",           None),
+    (["Restart Evidence"],                                                         "restart",          "reportdata_restart"),
+    (["Backup Execution"],                                                         "backup",           "reportdata_backup"),
+    (["Configuration Report"],                                                     "server",           "reportdata_server"),
+    (["Disk Drive Usage"],                                                         "disk_drive",       "reportdata_disk_drive"),
+    (["Size Growth Report", "Size & Grow", "Month Growth"],                       "size_growth",      "reportdata_size_growth"),
+    (["Top 5 CPU Queries", "Top CPU"],                                             "top_cpu",          "reportdata_top_cpu"),
+    (["Memory PLE"],                                                               "memory_ple",       "reportdata_memory_ple"),
+    (["Memory Snapshot"],                                                          "memory_snapshot",  "reportdata_memory_snapshot"),
+    (["CPU Daily Summary"],                                                        "cpu_daily_summary","reportdata_cpu_daily_summary"),
+    (["CPU Spike Analysis"],                                                       "cpu_spike_analysis","reportdata_cpu_spike_analysis"),
+    (["Disk IO Latency", "Disk IO RCA", "Weekly Disk IO"],                        "disk_io",          "diagnosticdata_disk_io"),
+    (["Wait Statistics", "Wait Stats"],                                            "wait_stats",       "diagnosticdata_wait_stats"),
+    (["Long Running Queries"],                                                     "long_queries",     "diagnosticdata_long_queries"),
+    (["Deadlock"],                                                                 "deadlocks",        "diagnosticdata_deadlocks"),
+    (["TempDB Usage"],                                                             "tempdb",           "diagnosticdata_tempdb"),
+    (["Agent Job", "Job Failure"],                                                 "job_executions",   "diagnosticdata_job_executions"),
+    (["Blocking Sessions"],                                                        "blocking",         "diagnosticdata_blocking"),
+    (["Error Logs"],                                                               "error_logs",       "diagnosticdata_error_logs"),
+    (["Top 10 CPU - Query Store", "Top 10 CPU Queries (IST)"],                    "cpu_querystore",   "diagnosticdata_cpu_querystore"),
     (["Top 10 Memory (Logical Reads) - Query Store", "Top 10 Memory Queries (IST)"], "mem_querystore", "diagnosticdata_mem_querystore"),
 ]
+# Backwards-compatibility: keep these for code that references them
+_REPORT_CATEGORIES = [(kw, lt, rt) for kw, lt, rt in _ALL_CATEGORIES if rt and rt.startswith("reportdata_")]
+_DIAG_CATEGORIES   = [(kw, lt, rt) for kw, lt, rt in _ALL_CATEGORIES if rt and rt.startswith("diagnosticdata_")]
 
 def _to_list(val):
     """Coerce a JSON value to a flat Python list of dicts."""
@@ -209,37 +212,26 @@ def process_email_item(conn, item):
     if not server_name:
         server_name = client_name
         
-    # Categorization and Target Table check
-    table_name = None
-    
-    # 1. Search report categories
-    for keywords, cat_type, tbl in _REPORT_CATEGORIES:
+    # Resolve report_type from the unified category list
+    report_type = None
+    for keywords, cat_type, rt in _ALL_CATEGORIES:
         if cat_type == log_type:
-            table_name = tbl
+            report_type = rt
             break
-            
-    # 2. Search diagnostic categories
-    if not table_name:
-        for keywords, cat_type, tbl in _DIAG_CATEGORIES:
-            if cat_type == log_type:
-                table_name = tbl
-                break
-                
-    # Extract records
+
+    # Extract records from email body
     records = parse_body_data(body, html_body)
     if not records:
-        # Fallback to single record holding the raw body text
         records = [{"raw_text": body}]
-        
+
     processed_any = False
-    
+
     with conn.cursor() as cur:
-        for idx, rec in enumerate(records):
+        for rec in records:
             rec_timestamp = extract_record_timestamp(rec, received_time)
-            
-            # CPU & Memory Reports (log_type: cpu, memory) also update server_utilization_history
+
+            # CPU & Memory → update server_utilization_history
             if log_type == "cpu":
-                # Look for utilization value
                 val = rec.get("cpu_utilization") or rec.get("cpu") or rec.get("avg_cpu") or rec.get("cpu_percent")
                 if val is not None:
                     try:
@@ -253,23 +245,22 @@ def process_email_item(conn, item):
                         upsert_server_utilization(conn, server_name, rec_timestamp, mem=float(val))
                     except (ValueError, TypeError):
                         pass
-                        
-            # Persist to table if mapped
-            if table_name:
-                rec_str = json.dumps(rec, sort_keys=True)
-                # Generate unique hash for this record to prevent duplicate ingestion
-                rec_hash = make_hash(f"{client_name}_{server_name}_{table_name}_{rec_timestamp.isoformat()}_{rec_str}")
-                
+
+            # Persist to unified telemetry_records table if report_type is mapped
+            if report_type:
+                rec_str  = json.dumps(rec, sort_keys=True)
+                rec_hash = make_hash(f"{client_name}_{server_name}_{report_type}_{rec_timestamp.isoformat()}_{rec_str}")
                 try:
-                    cur.execute(f"""
-                        INSERT INTO {table_name} (client_name, server_name, captured_at, raw_data, log_hash)
-                        VALUES (%s, %s, %s, %s, %s)
+                    cur.execute("""
+                        INSERT INTO telemetry_records
+                            (report_type, client_name, server_name, captured_at, raw_data, log_hash)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                         ON CONFLICT (log_hash) DO NOTHING;
-                    """, (client_name, server_name, rec_timestamp, rec_str, rec_hash))
+                    """, (report_type, client_name, server_name, rec_timestamp, rec_str, rec_hash))
                     processed_any = True
                 except Exception as db_err:
-                    logger.error(f"Error persisting record to {table_name}: {db_err}")
-                    
+                    logger.error(f"[TELEMETRY] Error persisting record (type={report_type}): {db_err}")
+
         conn.commit()
     return processed_any
 

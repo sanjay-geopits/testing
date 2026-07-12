@@ -83,12 +83,13 @@ def get_accurate_ist():
     return true_utc.astimezone(IST)
 
 def get_db_connection():
+    from core.config import DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT
     return psycopg2.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        database=os.getenv("DB_NAME", "Incoming-error-data"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", "y7UMhWmLcqSJzmhTGDyK"),
-        port="5432"
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        port=DB_PORT
     )
 
 # Global connection object
@@ -305,22 +306,17 @@ def insert_log(row):
 
                 return t_id
 
-            # Check if record exists in active logs
-            cur.execute("SELECT log_message, occurrence_count, is_semantic, semantic_count, severity, ticket_id, ticket_status, 'monitoring' as tablename FROM db_monitoring_logs WHERE log_hash = %s", (target_h,))
+            # Check if record exists in db_monitoring_logs
+            cur.execute("SELECT log_message, occurrence_count, is_semantic, semantic_count, severity, ticket_id, ticket_status FROM db_monitoring_logs WHERE log_hash = %s", (target_h,))
             existing = cur.fetchone()
-            
-            if not existing:
-                # Check if record exists in archived logs
-                cur.execute("SELECT log_message, occurrence_count, is_semantic, semantic_count, severity, ticket_id, ticket_status, 'archived' as tablename FROM db_archived_logs WHERE log_hash = %s", (target_h,))
-                existing = cur.fetchone()
             
             sev_clean = (severity or "").strip().capitalize()
             t_id = None
             t_status = ""
 
             if existing:
-                ex_msg, ex_occ, ex_is_sem, ex_sem_count, ex_sev, ex_ticket_id, ex_ticket_status, target_table_name = existing
-                target_table = "db_monitoring_logs" if target_table_name == 'monitoring' else "db_archived_logs"
+                ex_msg, ex_occ, ex_is_sem, ex_sem_count, ex_sev, ex_ticket_id, ex_ticket_status = existing
+                target_table = "db_monitoring_logs"
                 
                 t_id = ex_ticket_id
                 t_status = ex_ticket_status

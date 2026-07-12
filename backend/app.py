@@ -73,11 +73,12 @@ def check_client_alert_thresholds():
     from routes import send_email_outlook
 
     print("[ALERT DAEMON] Starting client alert threshold checking sweep...")
-    db_host = os.getenv("DB_HOST", "localhost")
-    db_name = os.getenv("DB_NAME", "Incoming-error-data")
-    db_user = os.getenv("DB_USER", "postgres")
-    db_password = os.getenv("DB_PASSWORD", "y7UMhWmLcqSJzmhTGDyK")
-    db_port = os.getenv("DB_PORT", "5432")
+    from core.config import DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT
+    db_host = DB_HOST
+    db_name = DB_NAME
+    db_user = DB_USER
+    db_password = DB_PASSWORD
+    db_port = DB_PORT
 
     try:
         conn = psycopg2.connect(host=db_host, database=db_name, user=db_user, password=db_password, port=db_port)
@@ -914,15 +915,17 @@ ADMIN_EMAILS = [email.strip().lower() for email in os.getenv("ADMIN_EMAILS", "")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
 
+from core.config import DB_HOST, DB_NAME, DB_USER, DB_PASSWORD, DB_PORT
+
 try:
     db_pool = ThreadedConnectionPool(
         minconn=5,
         maxconn=150,
-        host=os.getenv("DB_HOST", "localhost"),
-        database=os.getenv("DB_NAME", "Incoming-error-data"),
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", "y7UMhWmLcqSJzmhTGDyK"),
-        port=os.getenv("DB_PORT", "5432")
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        port=DB_PORT
     )
     print("Database Connection Pool initialized.")
 except Exception as e:
@@ -944,11 +947,11 @@ def get_db_connection():
     """Context manager for database connections from the pool."""
     if not db_pool:
         conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            database=os.getenv("DB_NAME", "Incoming-error-data"),
-            user=os.getenv("DB_USER", "postgres"),
-            password=os.getenv("DB_PASSWORD", "y7UMhWmLcqSJzmhTGDyK"),
-            port=os.getenv("DB_PORT", "5432")
+            host=DB_HOST,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            port=DB_PORT
         )
         try:
             yield conn
@@ -1027,7 +1030,7 @@ def resolve_user_role(email, username, current_role):
             cur = conn.cursor()
             
             if email_strip:
-                cur.execute("SELECT status FROM system_admins WHERE LOWER(email) = %s AND status = 'active'", (email_strip,))
+                cur.execute("SELECT role FROM users WHERE LOWER(email) = %s AND role = 'admin'", (email_strip,))
                 if cur.fetchone():
                     cur.close()
                     print(f"DEBUG_ROLE: Promoted '{email_strip}' to admin via system_admins table")
@@ -1256,7 +1259,7 @@ def check_user_access(username_or_email: str):
                 cur.close()
                 return True, "admin"
                 
-            cur.execute("SELECT status FROM system_admins WHERE LOWER(email) = %s AND status = 'active'", (username_or_email,))
+            cur.execute("SELECT role FROM users WHERE LOWER(email) = %s AND role = 'admin'", (username_or_email,))
             if cur.fetchone():
                 cur.close()
                 return True, "admin"
