@@ -11,17 +11,19 @@ from dotenv import load_dotenv
 load_dotenv()
 SOURCE_DB = {
     "host": os.getenv("DB_HOST", "localhost"),
-    "database": os.getenv("DB_NAME", "Incoming-error-data"),
+    "database": os.getenv("DB_NAME", "geovexsight"),
     "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "y7UMhWmLcqSJzmhTGDyK"),
+    "password": os.getenv("DB_PASSWORD", "2025"),
     "port": os.getenv("DB_PORT", "5432")
 }
 
 # Destination Database Name (on the same server)
-DEST_DB_NAME = "AI_SUMMARY_MSSQL"
+DEST_DB_NAME = os.getenv("DB_NAME", "geovexsight")
 
-def get_connection(db_name=SOURCE_DB["database"]):
+def get_connection(db_name=None):
     """Establishes a connection to a specific database on the same server."""
+    if db_name is None:
+        db_name = SOURCE_DB["database"]
     return psycopg2.connect(
         host=SOURCE_DB["host"],
         database=db_name,

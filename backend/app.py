@@ -807,41 +807,10 @@ async def startup_event():
     except Exception as cleanup_err:
         print(f"[CLEANUP ERROR] Failed to start cleanup thread: {cleanup_err}")
 
-# Link new features
-def init_db_tables():
-    try:
-        conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            database=os.getenv("DB_NAME", "Incoming-error-data"),
-            user=os.getenv("DB_USER", "postgres"),
-            password=os.getenv("DB_PASSWORD", "y7UMhWmLcqSJzmhTGDyK"),
-            port=os.getenv("DB_PORT", "5432")
-        )
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS client_access (
-                id SERIAL PRIMARY KEY,
-                client_email VARCHAR(255) NOT NULL,
-                technology VARCHAR(100) NOT NULL,
-                client_name VARCHAR(100) NOT NULL,
-                server_name VARCHAR(100) NOT NULL,
-                status VARCHAR(20) DEFAULT 'enabled',
-                phone_number VARCHAR(100),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("client_access table verified/created.")
-    except Exception as e:
-        print(f"Error initializing client_access table: {e}")
-
 from migrations import run_migrations
 from routes import router as new_features_router
 
 run_migrations()
-init_db_tables()
 app.include_router(new_features_router)
 
 #origins = [

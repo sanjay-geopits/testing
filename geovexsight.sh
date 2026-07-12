@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==========================================================
-#  GeoVexSight Service Manager
+#  GeoMon Service Manager
 #  Usage: ./geovexsight.sh [start|stop|restart|status|logs]
 # ==========================================================
 
@@ -18,7 +18,7 @@ NC='\033[0m'
 print_header() {
     echo ""
     echo -e "${BLUE}============================================${NC}"
-    echo -e "${BLUE}     GeoVexSight Service Manager           ${NC}"
+    echo -e "${BLUE}     GeoMon Service Manager           ${NC}"
     echo -e "${BLUE}============================================${NC}"
     echo ""
 }
@@ -124,7 +124,7 @@ cmd_stop() {
 }
 
 cmd_restart() {
-    echo -e "${YELLOW}Restarting all GeoVexSight services...${NC}"
+    echo -e "${YELLOW}Restarting all GeoMon services...${NC}"
     cmd_stop
     sleep 3
     cmd_start

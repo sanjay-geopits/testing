@@ -63,7 +63,7 @@ def get_connection():
         pass
 
     host = os.getenv("DB_HOST", "localhost")
-    database = os.getenv("DB_NAME", "Incoming-error-data")
+    database = os.getenv("DB_NAME", "geovexsight")
     user = os.getenv("DB_USER", "postgres")
     port = os.getenv("DB_PORT", "5432")
     
@@ -246,6 +246,20 @@ def run_migrations():
                 server_name TEXT,
                 client_email TEXT,
                 phone_number TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # 5b. Client Access Table if not exists
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS client_access (
+                id SERIAL PRIMARY KEY,
+                client_email VARCHAR(255) NOT NULL,
+                technology VARCHAR(100) NOT NULL,
+                client_name VARCHAR(100) NOT NULL,
+                server_name VARCHAR(100) NOT NULL,
+                status VARCHAR(20) DEFAULT 'enabled',
+                phone_number VARCHAR(100),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
