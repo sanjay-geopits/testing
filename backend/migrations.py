@@ -16,7 +16,7 @@ def _get_connection():
     return psycopg2.connect(
         host=os.getenv("DB_HOST", "localhost"),
         port=os.getenv("DB_PORT", "5432"),
-        database=os.getenv("DB_NAME", "geovexsight"),
+        database=os.getenv("DB_NAME", "geomon"),
         user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("DB_PASSWORD", "2025"),
     )
@@ -330,6 +330,109 @@ def run_migrations() -> None:
             );
         """)
 
+        # ── Report Sharing History ─────────────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS report_sharing_history (
+                id             SERIAL PRIMARY KEY,
+                report_id      INTEGER REFERENCES client_reports(id) ON DELETE SET NULL,
+                report_title   TEXT,
+                shared_by      TEXT,
+                share_platform TEXT,
+                recipient      TEXT,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # ── Archived Logs view (backed by db_monitoring_logs WHERE is_archived=TRUE)
+        # This view is created once; DML rules make it writable for bidirectional sync.
+        cur.execute("""
+            CREATE OR REPLACE VIEW db_archived_logs AS
+            SELECT id, client_name, server_name, db_type, log_type, log_source,
+                   log_time, log_time_utc, log_time_ist, log_level, log_message,
+                   occurrence_count, raw_log, email_subject, email_received_time,
+                   log_hash, created_at, status, owner, client_visibility,
+                   ticket_status, next_action, severity, status_updated_at,
+                   is_semantic, semantic_count, semantic_hash, time_bucket,
+                   ticket_id, is_archived
+            FROM db_monitoring_logs
+            WHERE is_archived = TRUE;
+        """)
+
+        # Create rewrite rules so UPDATE/INSERT/DELETE on the view pass through
+        cur.execute("""
+            CREATE OR REPLACE RULE db_archived_logs_update AS
+            ON UPDATE TO db_archived_logs DO INSTEAD
+                UPDATE db_monitoring_logs
+                SET status = NEW.status, owner = NEW.owner,
+                    client_visibility = NEW.client_visibility,
+                    ticket_status = NEW.ticket_status,
+                    next_action = NEW.next_action,
+                    is_archived = NEW.is_archived,
+                    status_updated_at = NEW.status_updated_at
+                WHERE id = OLD.id;
+        """)
+
+        cur.execute("""
+            CREATE OR REPLACE RULE db_archived_logs_insert AS
+            ON INSERT TO db_archived_logs DO INSTEAD
+                INSERT INTO db_monitoring_logs (
+                    client_name, server_name, db_type, log_type, log_source,
+                    log_time, log_time_utc, log_time_ist, log_level, log_message,
+                    occurrence_count, raw_log, email_subject, email_received_time,
+                    log_hash, severity, status, owner, client_visibility,
+                    ticket_status, next_action, is_archived, is_semantic,
+                    semantic_count, semantic_hash, time_bucket, ticket_id, status_updated_at
+                ) VALUES (
+                    NEW.client_name, NEW.server_name, NEW.db_type, NEW.log_type, NEW.log_source,
+                    NEW.log_time, NEW.log_time_utc, NEW.log_time_ist, NEW.log_level, NEW.log_message,
+                    NEW.occurrence_count, NEW.raw_log, NEW.email_subject, NEW.email_received_time,
+                    NEW.log_hash, NEW.severity, NEW.status, NEW.owner, NEW.client_visibility,
+                    NEW.ticket_status, NEW.next_action, TRUE, NEW.is_semantic,
+                    NEW.semantic_count, NEW.semantic_hash, NEW.time_bucket, NEW.ticket_id, NEW.status_updated_at
+                );
+        """)
+
+        cur.execute("""
+            CREATE OR REPLACE RULE db_archived_logs_delete AS
+            ON DELETE TO db_archived_logs DO INSTEAD
+                DELETE FROM db_monitoring_logs WHERE id = OLD.id;
+        """)
+
+        # ── Monitoring Logs Backup (AI context / reference table) ──
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS db_monitoring_logs_backup (
+                id          BIGSERIAL PRIMARY KEY,
+                client_name TEXT,
+                server_name TEXT,
+                db_type     TEXT,
+                log_type    TEXT,
+                log_time    TIMESTAMP,
+                log_message TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # ── Share History (WhatsApp/Teams audit trail) ─────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS share_history (
+                id               SERIAL PRIMARY KEY,
+                username         TEXT,
+                platform         TEXT,
+                content_type     TEXT,
+                client_name      TEXT,
+                server_name      TEXT,
+                log_message      TEXT,
+                notes            TEXT,
+                status           VARCHAR(100) DEFAULT '',
+                owner            VARCHAR(100) DEFAULT '',
+                ticket_status    VARCHAR(100) DEFAULT '',
+                next_action      TEXT         DEFAULT '',
+                client_visibility VARCHAR(100) DEFAULT '',
+                db_type          TEXT,
+                shared_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         # ── System (4 tables) ─────────────────────────────────────
         cur.execute("""
             CREATE TABLE IF NOT EXISTS system_settings (
@@ -407,6 +510,11 @@ def _safe_alters(cur) -> None:
         "ALTER TABLE report_reviews ADD COLUMN IF NOT EXISTS mom TEXT;",
         "ALTER TABLE processed_emails ADD COLUMN IF NOT EXISTS received_at TIMESTAMP;",
         "ALTER TABLE admin_agents ADD COLUMN IF NOT EXISTS email TEXT;",
+        # db_type column needed on sizing tables for technology-based filtering in routes.py
+        "ALTER TABLE database_size_history ADD COLUMN IF NOT EXISTS db_type VARCHAR(100);",
+        "ALTER TABLE table_size_history ADD COLUMN IF NOT EXISTS db_type VARCHAR(100);",
+        # status_updated_at for archived logs sync
+        "ALTER TABLE db_archived_logs ADD COLUMN IF NOT EXISTS status_updated_at TIMESTAMPTZ;",
     ]
     for sql in alters:
         try:
@@ -450,6 +558,14 @@ def _create_indexes(cur) -> None:
         "CREATE INDEX IF NOT EXISTS idx_server_util_lookup ON server_utilization_history (server_name, captured_at DESC);",
         # uptime
         "CREATE INDEX IF NOT EXISTS idx_db_uptime_history_lookup ON db_uptime_history (client_name, server_name, captured_at DESC);",
+        # archived logs
+        "CREATE INDEX IF NOT EXISTS idx_db_archived_logs_hash ON db_archived_logs (log_hash);",
+        "CREATE INDEX IF NOT EXISTS idx_db_archived_logs_client ON db_archived_logs (client_name, server_name);",
+        "CREATE INDEX IF NOT EXISTS idx_db_archived_logs_ticket ON db_archived_logs (ticket_id);",
+        # report sharing
+        "CREATE INDEX IF NOT EXISTS idx_report_sharing_report ON report_sharing_history (report_id, created_at DESC);",
+        # share history
+        "CREATE INDEX IF NOT EXISTS idx_share_history_client ON share_history (client_name, shared_at DESC);",
     ]
     for sql in indexes:
         try:

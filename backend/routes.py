@@ -3471,6 +3471,52 @@ def detect_client_name(message: str, history: Optional[List[dict]] = None) -> Op
                     
     return None
 
+_cached_db_schema = None
+
+def get_dynamic_db_schema() -> str:
+    global _cached_db_schema
+    if _cached_db_schema is not None:
+        return _cached_db_schema
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT table_name, column_name 
+            FROM information_schema.columns 
+            WHERE table_schema = 'public'
+            ORDER BY table_name, ordinal_position;
+        """)
+        rows = cur.fetchall()
+        conn.close()
+
+        if not rows:
+            return ""
+
+        tables = {}
+        for tbl, col in rows:
+            if tbl not in tables:
+                tables[tbl] = []
+            tables[tbl].append(col)
+
+        lines = []
+        for tbl, cols in sorted(tables.items()):
+            cols_str = ", ".join(cols)
+            lines.append(f"- {tbl} ({cols_str})")
+        _cached_db_schema = "\n".join(lines)
+        return _cached_db_schema
+    except Exception as e:
+        print("Failed to fetch dynamic DB schema:", e)
+        return (
+            "- tickets (id, business_unit, company, contact, ticket_name, category, status, priority, agent, description, created_by, created_at)\n"
+            "- ticket_comments (id, ticket_id, author, comment_type, content, attachments, created_at)\n"
+            "- db_monitoring_logs (id, client_name, server_name, db_type, log_type, log_time, log_message, severity, status, owner)\n"
+            "- database_size_history (id, server_name, database_name, total_size_bytes, captured_date, db_type)\n"
+            "- table_size_history (id, server_name, database_name, table_name, size_bytes, captured_date, db_type)\n"
+            "- db_archived_logs (id, client_name, server_name, db_type, log_type, log_time, log_message, severity, status, owner, status_updated_at)\n"
+            "- share_history (id, username, platform, content_type, client_name, server_name, log_message, notes, status, owner, ticket_status, next_action, client_visibility, db_type, shared_at)"
+        )
+
 def try_execute_db_query(message: str, history: Optional[list] = None) -> Optional[dict]:
     """
     Analyzes the user's message and history. If it requires details from the database tables,
@@ -3483,30 +3529,14 @@ def try_execute_db_query(message: str, history: Optional[list] = None) -> Option
     import httpx
     import psycopg2.extras
     
+    schema_str = get_dynamic_db_schema()
+    
     # We ask gpt-4o-mini to generate the SQL query
     prompt = (
         "You are an expert database administrator. Your task is to output a single read-only PostgreSQL SELECT query "
         "to fetch the relevant data from the database to answer the user's request. "
         "The database contains the following tables and schemas:\n"
-        "- tickets (id, business_unit, company, contact, ticket_name, category, status, priority, agent, description, created_by, created_at)\n"
-        "- ticket_comments (id, ticket_id, author, comment_type, content, attachments, created_at)\n"
-        "- db_monitoring_logs (id, client_name, server_name, db_type, log_type, log_time, log_message, severity, status, owner)\n"
-        "- database_size_history (id, server_name, database_name, total_size_bytes, captured_date)\n"
-        "- table_size_history (id, server_name, database_name, table_name, size_bytes, captured_date)\n"
-        "- admin_clients (id, client_name, db_type, server_name, created_at)\n"
-        "- share_history (id, username, platform, content_type, client_name, log_message, shared_at)\n"
-        "- user_page_activity (id, username, page_path, duration_seconds, last_active_at)\n"
-        "- feedbacks (id, username, email, feedback_text, rating, created_at)\n"
-        "- users (id, username, role, full_name, email, last_active_at)\n"
-        "- workers (id, name, email, role, department, is_active)\n"
-        "- db_uptime_history (id, client_name, server_name, db_type, service_name, status, uptime_desc, last_restart_time, captured_at)\n"
-        "- server_utilization_history (id, server_name, cpu_utilization, memory_utilization, disk_utilization, io_utilization, captured_at, read_iops, write_iops)\n"
-        "- leads (id, email, technology, status, is_lead)\n"
-        "- database_engineers (id, username, business_units, status)\n"
-        "- client_access (id, client_email, technology, client_name, server_name, status)\n"
-        "- client_reports (id, client_name, title, month, year, file_name, notes, uploaded_by, uploaded_at)\n"
-        "- clients (id, name, database_type, is_active)\n"
-        "- system_settings (key, value)\n\n"
+        f"{schema_str}\n\n"
         "Guidelines:\n"
         "1. Write a read-only PostgreSQL query. ONLY output the raw SELECT query, nothing else (no markdown blocks, no 'sql', no quotes, no explanation). Example: SELECT * FROM tickets LIMIT 5;\n"
         "2. If the user's message is a general chat, greeting, general knowledge query, explanation of SQL, or does not require looking up live system data, reply exactly with: NO_QUERY\n"

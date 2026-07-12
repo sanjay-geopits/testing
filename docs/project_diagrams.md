@@ -1,4 +1,4 @@
-# GeoVexSight Observability Platform: Architecture Diagrams
+# GeoMon Observability Platform: Architecture Diagrams
 
 This document contains the complete database entity relationship structure and the system-wide data flow/automation pipeline diagram.
 
@@ -348,9 +348,9 @@ flowchart TD
     end
 
     %% Frontend & AI Chat UI
-    subgraph ClientUI ["GeoVexSight UI & Diagnostics"]
+    subgraph ClientUI ["GeoMon UI & Diagnostics"]
         F1["FastAPI REST Endpoints (app.py / routes.py)"]:::interface
-        F2["GeoVexSight React Dashboard"]:::interface
+        F2["GeoMon React Dashboard"]:::interface
         F3["Node.js Express AI Chat Server (server.js)"]:::interface
         F4["OpenAI API (gpt-4o-mini)"]:::interface
     end

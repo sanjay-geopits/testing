@@ -11,14 +11,14 @@ from dotenv import load_dotenv
 load_dotenv()
 SOURCE_DB = {
     "host": os.getenv("DB_HOST", "localhost"),
-    "database": os.getenv("DB_NAME", "geovexsight"),
+    "database": os.getenv("DB_NAME", "geomon"),
     "user": os.getenv("DB_USER", "postgres"),
     "password": os.getenv("DB_PASSWORD", "2025"),
     "port": os.getenv("DB_PORT", "5432")
 }
 
 # Destination Database Name (on the same server)
-DEST_DB_NAME = os.getenv("DB_NAME", "geovexsight")
+DEST_DB_NAME = os.getenv("DB_NAME", "geomon")
 
 def get_connection(db_name=None):
     """Establishes a connection to a specific database on the same server."""

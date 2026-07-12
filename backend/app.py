@@ -285,8 +285,8 @@ def check_client_alert_thresholds():
                         peak_time = datetime.fromisoformat(peak_time)
                     except:
                         peak_time = now
-                if peak_time.tzinfo is None:
-                    peak_time = now.astimezone(pytz.utc).replace(tzinfo=None)
+                if peak_time.tzinfo is not None:
+                    peak_time = peak_time.replace(tzinfo=None)
 
                 start_window = peak_time - timedelta(hours=1)
                 end_window = peak_time + timedelta(hours=1)
@@ -810,13 +810,14 @@ async def startup_event():
 
 from migrations import run_migrations
 from routes import router as new_features_router
+from api import api_router
 
 run_migrations()
 app.include_router(new_features_router)
+app.include_router(api_router)
 
 #origins = [
 #    "https://api.geomon.geopits.com",
-#    "https://api.geovexsight.geopits.com",
 #]
 
 app.add_middleware(

@@ -1,12 +1,12 @@
-# GeoVexSight Observability Platform: Entity Relationship (ER) Diagram
+# GeoMon Observability Platform: Entity Relationship (ER) Diagram
 
-This document provides a complete database schema catalog and Entity Relationship (ER) diagram for the **GeoVexSight** database persistence layer.
+This document provides a complete database schema catalog and Entity Relationship (ER) diagram for the **GeoMon** database persistence layer.
 
 ---
 
 ## 1. Entity Relationship Diagram
 
-Below is the Mermaid representation of the GeoVexSight PostgreSQL database. The diagram groups entities by function (Authentication & Permissions, Incident Management, Alerts Config, Logging/Uptime, and Telemetry/Performance).
+Below is the Mermaid representation of the GeoMon PostgreSQL database. The diagram groups entities by function (Authentication & Permissions, Incident Management, Alerts Config, Logging/Uptime, and Telemetry/Performance).
 
 ```mermaid
 erDiagram

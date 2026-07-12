@@ -1,12 +1,12 @@
-# GeoVexSight Enterprise Observability Platform: System Architecture & Developer Hand-off Manual
+# GeoMon Enterprise Observability Platform: System Architecture & Developer Hand-off Manual
 
-This document provides a comprehensive technical overview, architectural mapping, database reference, and setup guide for the **GeoVexSight** enterprise observability platform. It is designed to facilitate a smooth knowledge transfer to the receiving engineering and database operations teams.
+This document provides a comprehensive technical overview, architectural mapping, database reference, and setup guide for the **GeoMon** enterprise observability platform. It is designed to facilitate a smooth knowledge transfer to the receiving engineering and database operations teams.
 
 ---
 
 ## 1. System Architecture Overview
 
-GeoVexSight is an enterprise-grade observability dashboard and automation hub designed to ingest, parse, classify, and persist database telemetry and system log files in real time. It automates ticket generation for threshold breaches (resource spikes, offline services, critical database errors) and provides an interactive dashboard with AI-driven root cause diagnostics.
+GeoMon is an enterprise-grade observability dashboard and automation hub designed to ingest, parse, classify, and persist database telemetry and system log files in real time. It automates ticket generation for threshold breaches (resource spikes, offline services, critical database errors) and provides an interactive dashboard with AI-driven root cause diagnostics.
 
 ```mermaid
 graph TD
@@ -35,7 +35,7 @@ graph TD
     end
 
     subgraph Frontend Observability UI
-        UI[GeoVexSight Web Dashboard]
+        UI[GeoMon Web Dashboard]
     end
 
     %% Email Flows
@@ -78,7 +78,7 @@ graph TD
 The project structure is organized as follows:
 
 ```
-GeoVexSight-App-main/
+GeoVexSight-App-main 2/
 │
 ├── app.py                      # Main FastAPI application, routing, and daemon initialization
 ├── config.py                   # Environment variable loader
@@ -144,7 +144,7 @@ The database structure is initialized automatically on startup via `migrations.p
 
 ## 4. Automated Alert & Telemetry Ingestion Pipeline
 
-GeoVexSight processes incoming alerts through a multi-stage pipeline designed to ingest, parser-route, deduplicate, write to the database, perform Root Cause Analysis (RCA), and alert engineers.
+GeoMon processes incoming alerts through a multi-stage pipeline designed to ingest, parser-route, deduplicate, write to the database, perform Root Cause Analysis (RCA), and alert engineers.
 
 ```
        [ Incoming Email ]
@@ -222,7 +222,7 @@ DB_PORT=5432
 
 # FastAPI Server Port & Environment
 PORT=8000
-APP_REDIRECT_URI=https://api.geovexsight.geopits.com/callback
+APP_REDIRECT_URI=https://api.geomon.geopits.com/callback
 
 # Microsoft EWS / Graph API OAuth Credentials
 USER_EMAIL=dccagent@geopits.com
@@ -274,10 +274,10 @@ Use the provided batch scripts to manage the lifecycle of background processes:
 
 For staging/production environments on Linux, manage services via Systemd configurations.
 
-#### 1. Backend Service Configuration (`/etc/systemd/system/geovexsight.service`)
+#### 1. Backend Service Configuration (`/etc/systemd/system/geomon.service`)
 ```ini
 [Unit]
-Description=GeoVexSight FastAPI Backend Application
+Description=GeoMon FastAPI Backend Application
 After=network.target postgresql.service
 
 [Service]
@@ -292,10 +292,10 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-#### 2. Log Migrator Service Configuration (`/etc/systemd/system/geovexsight-migrator.service`)
+#### 2. Log Migrator Service Configuration (`/etc/systemd/system/geomon-migrator.service`)
 ```ini
 [Unit]
-Description=GeoVexSight Critical Log Migrator Daemon
+Description=GeoMon Critical Log Migrator Daemon
 After=network.target
 
 [Service]
@@ -310,10 +310,10 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-#### 3. AI Chat Service Configuration (`/etc/systemd/system/geovexsight-chat.service`)
+#### 3. AI Chat Service Configuration (`/etc/systemd/system/geomon-chat.service`)
 ```ini
 [Unit]
-Description=GeoVexSight Node.js AI Chatbot Backend
+Description=GeoMon Node.js AI Chatbot Backend
 After=network.target
 
 [Service]
@@ -334,13 +334,13 @@ WantedBy=multi-user.target
 systemctl daemon-reload
 
 # Start services
-systemctl start geovexsight geovexsight-migrator geovexsight-chat
+systemctl start geomon geomon-migrator geomon-chat
 
 # Enable services to run on boot
-systemctl enable geovexsight geovexsight-migrator geovexsight-chat
+systemctl enable geomon geomon-migrator geomon-chat
 
 # Check service status
-systemctl status geovexsight
+systemctl status geomon
 ```
 
 ---

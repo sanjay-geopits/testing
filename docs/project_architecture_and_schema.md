@@ -1,12 +1,12 @@
-# GeoVexSight Observability Platform: Project Architecture, Schema, and Data Flows
+# GeoMon Observability Platform: Project Architecture, Schema, and Data Flows
 
-This document provides a comprehensive technical catalog of the **GeoVexSight** enterprise observability platform. It details the system architecture, full PostgreSQL database schema catalog, entity relationships, and core automation pipelines.
+This document provides a comprehensive technical catalog of the **GeoMon** enterprise observability platform. It details the system architecture, full PostgreSQL database schema catalog, entity relationships, and core automation pipelines.
 
 ---
 
 ## 1. System Architecture Overview
 
-GeoVexSight is built upon a decoupled microservices architecture designed to collect, process, index, and visualize massive telemetry logs from enterprise database engines (MSSQL, MySQL, MongoDB, PostgreSQL, etc.).
+GeoMon is built upon a decoupled microservices architecture designed to collect, process, index, and visualize massive telemetry logs from enterprise database engines (MSSQL, MySQL, MongoDB, PostgreSQL, etc.).
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -535,7 +535,7 @@ flowchart TD
 ## 5. Directory & Workspace Structure
 
 ```
-GeoVexSight-App/
+GeoMon-App/
 ├── backend/                       # Python FastAPI Backend
 │   ├── app.py                     # App startup & Threshold scheduling
 │   ├── routes.py                  # API endpoints (Auth, Clients, Activity)

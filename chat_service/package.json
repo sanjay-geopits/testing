@@ -1,5 +1,5 @@
 {
-  "name": "geovexsight-chatbot-backend",
+  "name": "geomon-chatbot-backend",
   "version": "1.0.0",
   "description": "Production-Ready Express Chatbot Backend with OpenAI SDK Integration",
   "main": "server.js",
