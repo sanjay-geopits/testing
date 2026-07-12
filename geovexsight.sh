@@ -71,15 +71,28 @@ cmd_start() {
         echo $! > "$PID_DIR/migrator.pid"
         echo -e "  ${GREEN}✓ Log Migrator started${NC} (PID $!)"
     fi
+    sleep 2
+
+    # ── 4. Telemetry Sync ────────────────────────────────
+    if pid=$(is_running "sync"); then
+        echo -e "  ${YELLOW}⚡ Telemetry Sync already running${NC} (PID $pid)"
+    else
+        cd "$APP_DIR"
+        nohup python3 -u backend/sync_service.py --loop \
+            > "$LOG_DIR/sync_service.log" 2>&1 &
+        echo $! > "$PID_DIR/sync.pid"
+        echo -e "  ${GREEN}✓ Telemetry Sync started${NC} (PID $!)"
+    fi
 
     echo ""
     echo -e "  ${CYAN}All services started. Run './geovexsight.sh status' to verify.${NC}"
     echo ""
 }
 
+
 cmd_stop() {
     print_header
-    for svc in app mail migrator; do
+    for svc in app mail migrator sync; do
         pidfile="$PID_DIR/$svc.pid"
         if [ -f "$pidfile" ]; then
             pid=$(cat "$pidfile")
@@ -103,6 +116,8 @@ cmd_stop() {
     pkill -f email_extracter.py 2>/dev/null
     pkill -f backend/migrate_top_logs.py 2>/dev/null
     pkill -f migrate_top_logs.py 2>/dev/null
+    pkill -f backend/sync_service.py 2>/dev/null
+    pkill -f sync_service.py 2>/dev/null
     pkill -f "uvicorn backend.app:app" 2>/dev/null
     pkill -f "uvicorn app:app" 2>/dev/null
     echo ""
@@ -125,6 +140,7 @@ cmd_status() {
             app)      echo "FastAPI App     (port 8000)" ;;
             mail)     echo "Mail Monitor    (email_extracter)" ;;
             migrator) echo "Log Migrator    (migrate_top_logs)" ;;
+            sync)     echo "Telemetry Sync   (sync_service)" ;;
         esac
     }
     svc_log() {
@@ -132,10 +148,11 @@ cmd_status() {
             app)      echo "app.log" ;;
             mail)     echo "mail.log" ;;
             migrator) echo "migrator.log" ;;
+            sync)     echo "sync_service.log" ;;
         esac
     }
 
-    for svc in app mail migrator; do
+    for svc in app mail migrator sync; do
         label=$(svc_name "$svc")
         if pid=$(is_running "$svc"); then
             echo -e "  ${GREEN}● RUNNING${NC}  $label  (PID: $pid)"
@@ -146,7 +163,7 @@ cmd_status() {
 
     echo ""
     echo -e "  ${BLUE}Log files:${NC}"
-    for svc in app mail migrator; do
+    for svc in app mail migrator sync; do
         logname=$(svc_log "$svc")
         f="$LOG_DIR/$logname"
         if [ -f "$f" ]; then
@@ -174,8 +191,9 @@ cmd_logs() {
         app)      tail -f "$LOG_DIR/app.log" ;;
         mail)     tail -f "$LOG_DIR/mail.log" ;;
         migrator) tail -f "$LOG_DIR/migrator.log" ;;
+        sync)     tail -f "$LOG_DIR/sync_service.log" ;;
         *)
-            echo "Usage: $0 logs [app|mail|migrator]"
+            echo "Usage: $0 logs [app|mail|migrator|sync]"
             ;;
     esac
 }
@@ -189,13 +207,13 @@ case "${1:-status}" in
     logs)    cmd_logs "${2:-mail}" ;;
     *)
         echo ""
-        echo "Usage: $0 [start|stop|restart|status|logs [app|mail|migrator]]"
+        echo "Usage: $0 [start|stop|restart|status|logs [app|mail|migrator|sync]]"
         echo ""
         echo "  start    — Start all services"
         echo "  stop     — Stop all services"
         echo "  restart  — Restart all services"
         echo "  status   — Show running status + log summary"
-        echo "  logs     — Tail live log (app / mail / migrator)"
+        echo "  logs     — Tail live log (app / mail / migrator / sync)"
         echo ""
         exit 1
         ;;

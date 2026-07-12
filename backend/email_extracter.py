@@ -2768,6 +2768,118 @@ Check Time: 2026-06-16 08:00 UTC"""
         except Exception as sim_err:
             print("[MOCK MAIL] Failed to run simulation:", sim_err)
         return
+
+    # ════════════════════════════════════════════════════════════════════════
+    # ── Load processed IDs and keys to prevent duplicate processing ──
+    # ════════════════════════════════════════════════════════════════════════
+    processed_ids = set()
+    processed_keys = set()
+    try:
+        _conn = get_connection()
+        _cur = _conn.cursor()
+        # Fetch last 30 days of processed emails
+        _cur.execute("SELECT message_id, subject, received_at FROM processed_emails WHERE received_at >= NOW() - INTERVAL '30 days';")
+        for row in _cur.fetchall():
+            if row[0]:
+                processed_ids.add(str(row[0]).strip())
+            if row[1] and row[2]:
+                sub_norm = str(row[1]).strip()
+                recv_norm = row[2].replace(tzinfo=None, microsecond=0) if hasattr(row[2], 'replace') else row[2]
+                processed_keys.add((sub_norm, recv_norm))
+        _cur.close()
+        _conn.close()
+        print(f"[SYNC] Loaded {len(processed_ids)} processed message IDs and {len(processed_keys)} processed keys (last 30 days).")
+    except Exception as load_err:
+        print("[SYNC] Error loading processed message cache:", load_err)
+
+    def is_message_duplicate(item, subject, msg_id):
+        msg_id_str = str(msg_id).strip() if msg_id else None
+        item_recv = item.datetime_received.replace(tzinfo=None, microsecond=0) if hasattr(item.datetime_received, 'replace') else item.datetime_received
+        if msg_id_str and msg_id_str in processed_ids:
+            return True
+        if (subject, item_recv) in processed_keys:
+            return True
+        return False
+
+    def mark_message_as_processed(item, subject, sender_email, msg_id):
+        msg_id_str = str(msg_id).strip() if msg_id else None
+        item_recv = item.datetime_received.replace(tzinfo=None, microsecond=0) if hasattr(item.datetime_received, 'replace') else item.datetime_received
+        
+        # 1. Mark as read on Exchange
+        if not item.is_read:
+            try:
+                item.is_read = True
+                item.save()
+            except Exception as e_save:
+                print(f"[SYNC] Failed to mark message read on Exchange: {e_save}")
+                
+        # 2. Insert into DB
+        if msg_id_str:
+            try:
+                conn_db = get_connection()
+                cur_db = conn_db.cursor()
+                cur_db.execute(
+                    """INSERT INTO processed_emails (message_id, subject, sender, received_at) 
+                       VALUES (%s, %s, %s, %s) 
+                       ON CONFLICT (message_id) DO NOTHING;""",
+                    (msg_id_str, (subject or "")[:490], (sender_email or "")[:240], item_recv)
+                )
+                conn_db.commit()
+                cur_db.close()
+                conn_db.close()
+            except Exception as e_db:
+                print(f"[SYNC] Error writing processed_email to DB: {e_db}")
+                
+        # 3. Add to in-memory cache
+        if msg_id_str:
+            processed_ids.add(msg_id_str)
+        if subject and item_recv:
+            processed_keys.add((str(subject).strip(), item_recv))
+
+    def matches_subject_filters(subject):
+        if not subject:
+            return False
+        
+        subj_lower = subject.lower()
+        
+        # 1. Ticket replies / Incidents (Inbox)
+        if "ticket" in subj_lower:
+            return True
+        if re.match(r'^\s*(re|fw|fwd|reply|forward|aw|wg|rv)\s*:\s*', subject, re.IGNORECASE):
+            return True
+            
+        # 2. RDS client keywords (Ai-report-automation, Inbox)
+        if any(kw in subj_lower for kw in ["cropin", "runloyal", "intentwise", "shemaroo", "cnergee", "flowglobal", "retailscan", "credopay", "artfine"]):
+            return True
+            
+        # 3. Size / Storage / DB Size reports (MySQL-Mongo-Postgres-DB, Inbox)
+        if any(kw in subj_lower for kw in [
+            "db & table size report", "db and table size report",
+            "size report", "collection size report",
+            "table size growth report", "storage report",
+            "month growth", "size growth"
+        ]):
+            return True
+            
+        # 4. Log Analytics / Health Reports (Inbox)
+        if any(kw in subj_lower for kw in [
+            "[hourly]", "[daily digest]", "infrastructure health report",
+            "log analytics", "real-time log", "database health report",
+            "performance report", "health report"
+        ]):
+            return True
+            
+        # 5. Standard telemetry/alert subjects (MSSQL Alert, Ai-report-automation, Inbox)
+        if is_valid_subject(subject):
+            return True
+            
+        # 6. Fallback parse check
+        client_test, _, _, log_type_test = parse_subject(subject)
+        if client_test and log_type_test != "generic":
+            return True
+            
+        return False
+
     # ════════════════════════════════════════════════════════════════════════
     # FOLDER 1 — MSSQL Alert  →  MSSQL alert emails only (creates tickets)
     # ════════════════════════════════════════════════════════════════════════
@@ -2789,34 +2901,39 @@ Check Time: 2026-06-16 08:00 UTC"""
             raise
 
     import datetime as _dt
+    import hashlib
     for item in mssql_items:
         subject = (item.subject or "").strip()
         msg_id = getattr(item, 'id', None) or getattr(item, 'message_id', None)
-        
-        # Maxhealthcare exclusion filter removed to read all mail properly.
+        if not msg_id:
+            msg_hash = (subject + str(getattr(item, "datetime_received", "")) + str(getattr(item, "datetime_sent", "")))
+            msg_id = hashlib.sha256(msg_hash.encode()).hexdigest()
 
-        try:
-            if msg_id:
-                _dc = get_connection(); _dcc = _dc.cursor()
-                _dcc.execute("SELECT 1 FROM processed_emails WHERE message_id = %s LIMIT 1", (str(msg_id),))
-                if _dcc.fetchone():
-                    _dcc.close(); _dc.close()
-                    if not item.is_read:
-                        item.is_read = True; item.save()
-                    continue
-                _dcc.close(); _dc.close()
-        except Exception: pass
-
-        # Skip system/NDR emails
         sender_email = "SYSTEM"
         if hasattr(item, 'sender') and item.sender and hasattr(item.sender, 'email_address') and item.sender.email_address:
             sender_email = item.sender.email_address
         sender_lower = sender_email.lower().strip()
         system_email = (USER or "dccagent@geopits.com").lower().strip()
         is_reply_or_fwd = bool(re.match(r'^\s*(re|fw|fwd|reply|forward|aw|wg|rv)\s*:\s*', subject, re.IGNORECASE))
+
+        # Check NDR / Bounce or self-copied non-reply
         if is_ndr_or_bounce(item) or (sender_lower == system_email and not is_reply_or_fwd):
+            mark_message_as_processed(item, subject, sender_email, msg_id)
+            continue
+
+        # Check Duplicate
+        if is_message_duplicate(item, subject, msg_id):
             if not item.is_read:
-                item.is_read = True; item.save()
+                try:
+                    item.is_read = True
+                    item.save()
+                except Exception: pass
+            continue
+
+        # Check Subject Filter
+        if not matches_subject_filters(subject):
+            print(f"[MSSQL Alert] Skipping email not matching subject filters: {subject}")
+            mark_message_as_processed(item, subject, sender_email, msg_id)
             continue
 
         time.sleep(0.3)
@@ -2845,19 +2962,8 @@ Check Time: 2026-06-16 08:00 UTC"""
                     _dup = _dcc.fetchone()
             _dcc.close(); _dc.close()
             if _dup:
-                print(f"[MSSQL Alert] Skipping duplicate: {subject}")
-                if not item.is_read:
-                    item.is_read = True; item.save()
-                if msg_id:
-                    try:
-                        _pc = get_connection(); _pcc = _pc.cursor()
-                        _pcc.execute("""
-                            INSERT INTO processed_emails (message_id, subject, sender, received_at) 
-                            VALUES (%s, %s, %s, %s) 
-                            ON CONFLICT (message_id) DO NOTHING
-                        """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
-                        _pc.commit(); _pcc.close(); _pc.close()
-                    except Exception: pass
+                print(f"[MSSQL Alert] Skipping duplicate ticket: {subject}")
+                mark_message_as_processed(item, subject, sender_email, msg_id)
                 continue
         except Exception: pass
 
@@ -2868,18 +2974,8 @@ Check Time: 2026-06-16 08:00 UTC"""
         except Exception as _e:
             print(f"[MSSQL Alert] process_mail error: {_e}")
             import traceback; traceback.print_exc()
-        if not item.is_read:
-            item.is_read = True; item.save()
-        if msg_id:
-            try:
-                _pc = get_connection(); _pcc = _pc.cursor()
-                _pcc.execute("""
-                    INSERT INTO processed_emails (message_id, subject, sender, received_at) 
-                    VALUES (%s, %s, %s, %s) 
-                    ON CONFLICT (message_id) DO NOTHING
-                """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
-                _pc.commit(); _pcc.close(); _pc.close()
-            except Exception: pass
+
+        mark_message_as_processed(item, subject, sender_email, msg_id)
 
     if mssql_items:
         try:
@@ -2912,24 +3008,9 @@ Check Time: 2026-06-16 08:00 UTC"""
     for item in ai_items:
         subject = (item.subject or "").strip()
         msg_id = getattr(item, 'id', None) or getattr(item, 'message_id', None)
-
-        # Maxhealthcare exclusion filter removed to read all mail properly.
-
-        try:
-            if msg_id:
-                _dc = get_connection(); _dcc = _dc.cursor()
-                _dcc.execute("""
-                    SELECT 1 FROM processed_emails 
-                    WHERE message_id = %s OR (subject = %s AND received_at = %s)
-                    LIMIT 1
-                """, (str(msg_id), subject[:490], item.datetime_received.replace(tzinfo=None)))
-                if _dcc.fetchone():
-                    _dcc.close(); _dc.close()
-                    if not item.is_read:
-                        item.is_read = True; item.save()
-                    continue
-                _dcc.close(); _dc.close()
-        except Exception: pass
+        if not msg_id:
+            msg_hash = (subject + str(getattr(item, "datetime_received", "")) + str(getattr(item, "datetime_sent", "")))
+            msg_id = hashlib.sha256(msg_hash.encode()).hexdigest()
 
         sender_email = "SYSTEM"
         if hasattr(item, 'sender') and item.sender and hasattr(item.sender, 'email_address') and item.sender.email_address:
@@ -2937,19 +3018,25 @@ Check Time: 2026-06-16 08:00 UTC"""
         sender_lower = sender_email.lower().strip()
         system_email = (USER or "dccagent@geopits.com").lower().strip()
         is_reply_or_fwd = bool(re.match(r'^\s*(re|fw|fwd|reply|forward|aw|wg|rv)\s*:\s*', subject, re.IGNORECASE))
+
+        # Check NDR / Bounce or self-copied non-reply
         if is_ndr_or_bounce(item) or (sender_lower == system_email and not is_reply_or_fwd):
+            mark_message_as_processed(item, subject, sender_email, msg_id)
+            continue
+
+        # Check Duplicate
+        if is_message_duplicate(item, subject, msg_id):
             if not item.is_read:
-                item.is_read = True; item.save()
-            if msg_id:
                 try:
-                    _pc = get_connection(); _pcc = _pc.cursor()
-                    _pc.execute("""
-                        INSERT INTO processed_emails (message_id, subject, sender, received_at) 
-                        VALUES (%s, %s, %s, %s) 
-                        ON CONFLICT (message_id) DO NOTHING
-                    """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
-                    _pc.commit(); _pcc.close(); _pc.close()
+                    item.is_read = True
+                    item.save()
                 except Exception: pass
+            continue
+
+        # Check Subject Filter
+        if not matches_subject_filters(subject):
+            print(f"[Ai-report-automation] Skipping email not matching subject filters: {subject}")
+            mark_message_as_processed(item, subject, sender_email, msg_id)
             continue
 
         is_rds = bool(subject and _is_rds_mail(subject))
@@ -2991,7 +3078,7 @@ Check Time: 2026-06-16 08:00 UTC"""
                 except Exception as _t_err:
                     print(f"[Ai-report-automation] email_fetcher telemetry error: {_t_err}")
 
-
+        mark_message_as_processed(item, subject, sender_email, msg_id)
 
     if ai_items:
         try:
@@ -3005,20 +3092,6 @@ Check Time: 2026-06-16 08:00 UTC"""
             try:
                 save_folder_watermark("Ai-report-automation", _dt.datetime.utcnow())
             except Exception: pass
-
-
-        if False:
-            try:
-                _pc = get_connection(); _pcc = _pc.cursor()
-                _pcc.execute("""
-                    INSERT INTO processed_emails (message_id, subject, sender, received_at) 
-                    VALUES (%s, %s, %s, %s) 
-                    ON CONFLICT (message_id) DO NOTHING
-                """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
-                _pc.commit(); _pcc.close(); _pc.close()
-            except Exception: pass
-
-
 
     # ════════════════════════════════════════════════════════════════════════
     # FOLDER 3 — MySQL-Mongo-Postgres-DB  →  DB & Table size telemetry only
@@ -3055,41 +3128,39 @@ Check Time: 2026-06-16 08:00 UTC"""
     for item in db_size_items:
         subject = (item.subject or "").strip()
         msg_id = getattr(item, 'id', None) or getattr(item, 'message_id', None)
-
-        # Maxhealthcare exclusion filter removed to read all mail properly.
-
-        try:
-            if msg_id:
-                _dc = get_connection(); _dcc = _dc.cursor()
-                _dcc.execute("""
-                    SELECT 1 FROM processed_emails 
-                    WHERE message_id = %s OR (subject = %s AND received_at = %s)
-                    LIMIT 1
-                """, (str(msg_id), subject[:490], item.datetime_received.replace(tzinfo=None)))
-                if _dcc.fetchone():
-                    _dcc.close(); _dc.close()
-                    if not item.is_read:
-                        item.is_read = True; item.save()
-                    continue
-                _dcc.close(); _dc.close()
-        except Exception: pass
+        if not msg_id:
+            msg_hash = (subject + str(getattr(item, "datetime_received", "")) + str(getattr(item, "datetime_sent", "")))
+            msg_id = hashlib.sha256(msg_hash.encode()).hexdigest()
 
         sender_email = "SYSTEM"
         if hasattr(item, 'sender') and item.sender and hasattr(item.sender, 'email_address') and item.sender.email_address:
             sender_email = item.sender.email_address
+
+        # Check NDR / Bounce or self-copied non-reply
         if is_ndr_or_bounce(item):
+            mark_message_as_processed(item, subject, sender_email, msg_id)
+            continue
+
+        # Check Duplicate
+        if is_message_duplicate(item, subject, msg_id):
             if not item.is_read:
-                item.is_read = True; item.save()
-            if msg_id:
                 try:
-                    _pc = get_connection(); _pcc = _pc.cursor()
-                    _pcc.execute("""
-                        INSERT INTO processed_emails (message_id, subject, sender, received_at) 
-                        VALUES (%s, %s, %s, %s) 
-                        ON CONFLICT (message_id) DO NOTHING
-                    """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
-                    _pc.commit(); _pcc.close(); _pc.close()
+                    item.is_read = True
+                    item.save()
                 except Exception: pass
+            continue
+
+        # Check Subject Filter (specifically size/storage report)
+        subj_lower = subject.lower()
+        is_size_report = any(kw in subj_lower for kw in [
+            "db & table size report", "db and table size report",
+            "size report", "collection size report",
+            "table size growth report", "storage report",
+            "month growth", "size growth"
+        ])
+        if not is_size_report:
+            print(f"[DB Size Folder] Skipping email not matching size reports: {subject}")
+            mark_message_as_processed(item, subject, sender_email, msg_id)
             continue
 
         time.sleep(0.3)
@@ -3106,18 +3177,8 @@ Check Time: 2026-06-16 08:00 UTC"""
             audit_logger.info(f"[DB SIZE PROCESSED] {subject}")
         except Exception as _e:
             print(f"[DB Size Folder] process_telemetry_email error: {_e}")
-        if not item.is_read:
-            item.is_read = True; item.save()
-        if msg_id:
-            try:
-                _pc = get_connection(); _pcc = _pc.cursor()
-                _pcc.execute("""
-                    INSERT INTO processed_emails (message_id, subject, sender, received_at) 
-                    VALUES (%s, %s, %s, %s) 
-                    ON CONFLICT (message_id) DO NOTHING
-                """, (str(msg_id), subject[:490], str(sender_email)[:240], item.datetime_received.replace(tzinfo=None)))
-                _pc.commit(); _pcc.close(); _pc.close()
-            except Exception: pass
+
+        mark_message_as_processed(item, subject, sender_email, msg_id)
 
     if db_size_items:
         try:
@@ -3132,96 +3193,55 @@ Check Time: 2026-06-16 08:00 UTC"""
 
     # ════════════════════════════════════════════════════════════════════════
     # FOLDER 4 — Inbox  →  Replies + real-time log analytics + DB size mails
-    # (handled in the block below)
     # ════════════════════════════════════════════════════════════════════════
     print("\n[FOLDER 4] Reading Inbox — replies, log analytics, and size report emails...")
-
     try:
         sent_ticket_ids, sent_base_subjects = get_sent_ticket_info(account)
         print(f"[REPLY FILTER] Loaded {len(sent_ticket_ids)} ticket IDs and {len(sent_base_subjects)} base subjects from Sent Items.")
 
         inbox = account.inbox
-
-        # ── Load processed IDs and compute inbox watermark ────────────────────
-        processed_ids = set()
-        processed_keys = set()
-        try:
-            conn = get_connection()
-            cur = conn.cursor()
-            cur.execute("SELECT message_id, subject, received_at FROM processed_emails;")
-            for row in cur.fetchall():
-                if row[0]:
-                    processed_ids.add(row[0])
-                if row[1] and row[2]:
-                    sub_norm = str(row[1]).strip()
-                    recv_norm = row[2].replace(tzinfo=None) if hasattr(row[2], 'replace') else row[2]
-                    processed_keys.add((sub_norm, recv_norm))
-            cur.close()
-            conn.close()
-        except Exception as load_err:
-            print("[REPLY FILTER] Error loading processed message IDs:", load_err)
-
-        # Fetch all inbox messages received after the watermark (oldest-first, up to 200 items per cycle)
         inbox_sync_dt = get_folder_watermark("Inbox", default_lookback_hours=24)
         print(f"[INBOX] Fetching messages received after {inbox_sync_dt} (processed_emails watermark)")
         inbox_items = list(inbox.since(inbox_sync_dt).order_by('datetime_received')[:200])
         print(f"[INBOX] Found {len(inbox_items)} inbox emails to evaluate in this cycle.")
 
-        def mark_as_processed(m_id, sub, snd, rcv_at=None):
-            try:
-                if rcv_at is None:
-                    try:
-                        rcv_at = item.datetime_received
-                    except Exception:
-                        import datetime
-                        rcv_at = datetime.datetime.utcnow()
-                conn = get_connection()
-                cur = conn.cursor()
-                cur.execute(
-                    """INSERT INTO processed_emails (message_id, subject, sender, received_at) 
-                       VALUES (%s, %s, %s, %s) 
-                       ON CONFLICT (message_id) DO NOTHING;""",
-                    (m_id, (sub or "")[:490], (snd or "")[:240], rcv_at.replace(tzinfo=None) if hasattr(rcv_at, 'replace') else rcv_at)
-                )
-                conn.commit()
-                cur.close()
-                conn.close()
-            except Exception as e_proc:
-                print(f"[REPLY FILTER] Error marking message {m_id} as processed: {e_proc}")
-        
         for item in inbox_items:
             subject = (item.subject or "").strip()
-            # Determine unique message ID
             msg_id = getattr(item, "id", None) or getattr(item, "message_id", None)
             if not msg_id:
                 msg_hash = (subject + str(getattr(item, "datetime_received", "")) + str(getattr(item, "datetime_sent", "")))
                 msg_id = hashlib.sha256(msg_hash.encode()).hexdigest()
 
-            # Skip already-processed mails (in-memory set loaded above)
-            item_recv = item.datetime_received.replace(tzinfo=None) if hasattr(item.datetime_received, 'replace') else item.datetime_received
-            if str(msg_id) in processed_ids or (subject, item_recv) in processed_keys:
-                # Mark as read on exchange too so it stops appearing as unread
-                if not item.is_read:
-                    try:
-                        item.is_read = True
-                        item.save()
-                    except Exception:
-                        pass
-                continue
-
-            time.sleep(0.5)
-
-            # Maxhealthcare exclusion filter removed to read all mail properly.
-
-            # Get sender details
             sender_email = "SYSTEM"
             if hasattr(item, 'sender') and item.sender and hasattr(item.sender, 'email_address') and item.sender.email_address:
                 sender_email = item.sender.email_address
             elif hasattr(item, 'author') and item.author and hasattr(item.author, 'email_address') and item.author.email_address:
                 sender_email = item.author.email_address
             sender_lower = sender_email.lower().strip()
-            
-            # Clean body/check for system alert
+            system_email = (USER or "dccagent@geopits.com").lower().strip()
+            is_reply_or_fwd = bool(re.match(r'^\s*(re|fw|fwd|reply|forward|aw|wg|rv)\s*:\s*', subject, re.IGNORECASE))
+
+            # Check NDR / Bounce or self-copied non-reply
+            if is_ndr_or_bounce(item):
+                print(f"[REPLY FILTER] Skipping bounce email: {subject}")
+                mark_message_as_processed(item, subject, sender_email, msg_id)
+                continue
+
+            # Check Duplicate
+            if is_message_duplicate(item, subject, msg_id):
+                if not item.is_read:
+                    try:
+                        item.is_read = True
+                        item.save()
+                    except Exception: pass
+                continue
+
+            # Check Subject Filter
+            if not matches_subject_filters(subject):
+                print(f"[INBOX] Skipping email not matching subject filters: {subject}")
+                mark_message_as_processed(item, subject, sender_email, msg_id)
+                continue
+
             body_val = str(getattr(item, 'text_body', None) or getattr(item, 'body', None) or "")
             body_lower = body_val.lower()
             is_system_alert = (
@@ -3231,20 +3251,6 @@ Check Time: 2026-06-16 08:00 UTC"""
                 "an automated daily storage audit" in body_lower or
                 "automated daily storage audit" in body_lower
             )
-
-            is_reply_or_fwd = re.match(r'^\s*(re|fw|fwd|reply|forward|aw|wg|rv)\s*:\s*', subject, re.IGNORECASE)
-            # Skip NDR bounce reports immediately
-            if is_ndr_or_bounce(item):
-                print(f"[REPLY FILTER] Skipping bounce email: {subject}")
-                if not item.is_read:
-                    item.is_read = True
-                    item.save()
-                mark_as_processed(msg_id, subject, sender_email)
-                continue
-
-            # Determine if this email matches telemetry or log analytics based on subject filter only
-            is_reply_or_fwd = bool(re.match(r'^\s*(re|fw|fwd|reply|forward|aw|wg|rv)\s*:\s*', subject, re.IGNORECASE))
-            system_email = (USER or "dccagent@geopits.com").lower().strip()
 
             client_t, server_t, db_t, log_type_t = parse_subject(subject)
             is_telemetry = False
@@ -3297,22 +3303,14 @@ Check Time: 2026-06-16 08:00 UTC"""
                     print("Error checking reply mail:", re_err)
 
                 if processed_as_reply:
-                    if not item.is_read:
-                        item.is_read = True
-                        item.save()
-                    mark_as_processed(msg_id, subject, sender_email)
+                    mark_message_as_processed(item, subject, sender_email, msg_id)
                     continue
                 else:
-                    # It was an automated system alert email copy (not a human reply).
-                    # We want to skip it entirely and not parse it as a new alert.
                     print(f"[INBOX] Skipping system alert email copy: {subject}")
-                    if not item.is_read:
-                        item.is_read = True
-                        item.save()
-                    mark_as_processed(msg_id, subject, sender_email)
+                    mark_message_as_processed(item, subject, sender_email, msg_id)
                     continue
 
-            # If NOT processed as a reply, check and process log analytics/telemetry directly (subject filter only)
+            # Check and process other categories directly
             if is_rds and not is_reply_or_fwd:
                 print(f"Detected Inbox RDS Email: {subject}")
                 try:
@@ -3320,10 +3318,7 @@ Check Time: 2026-06-16 08:00 UTC"""
                 except Exception as rds_err:
                     print(f"[RDS MAIL] Error: {rds_err}")
                 audit_logger.info(f"[PROCESSED] {subject}")
-                if not item.is_read:
-                    item.is_read = True
-                    item.save()
-                mark_as_processed(msg_id, subject, sender_email)
+                mark_message_as_processed(item, subject, sender_email, msg_id)
                 continue
 
             if is_telemetry and not is_reply_or_fwd:
@@ -3332,17 +3327,13 @@ Check Time: 2026-06-16 08:00 UTC"""
                     process_mail(item, override_client=client_t, override_server=server_t, override_db=db_t, override_log_type=log_type_t)
                 except Exception as pm_err:
                     print(f"[INBOX] process_mail error: {pm_err}")
-                if not item.is_read:
-                    item.is_read = True
-                    item.save()
-                mark_as_processed(msg_id, subject, sender_email)
+                mark_message_as_processed(item, subject, sender_email, msg_id)
                 continue
 
             if is_storage and not is_reply_or_fwd:
                 print(f"[INBOX] Detected DB/Table Size mail: {subject}")
                 try:
                     from telemetry_parser import process_telemetry_email
-                    import psycopg2
                     _conn = get_connection()
                     _cur = _conn.cursor()
                     html_body = getattr(item, 'body', None) or getattr(item, 'html_body', None) or body_val or ""
@@ -3355,10 +3346,7 @@ Check Time: 2026-06-16 08:00 UTC"""
                     print(f"[INBOX] Storage mail ingested: {_inserted} records for '{subject}'")
                 except Exception as _stor_err:
                     print(f"[INBOX] Storage mail error: {_stor_err}")
-                if not item.is_read:
-                    item.is_read = True
-                    item.save()
-                mark_as_processed(msg_id, subject, sender_email)
+                mark_message_as_processed(item, subject, sender_email, msg_id)
                 continue
 
             if is_log_analytics and not is_reply_or_fwd:
@@ -3368,10 +3356,7 @@ Check Time: 2026-06-16 08:00 UTC"""
                     print(f"[INBOX] Log analytics mail processed: {subject}")
                 except Exception as _la_err:
                     print(f"[INBOX] Log analytics mail error: {_la_err}")
-                if not item.is_read:
-                    item.is_read = True
-                    item.save()
-                mark_as_processed(msg_id, subject, sender_email)
+                mark_message_as_processed(item, subject, sender_email, msg_id)
                 continue
 
             # Otherwise, skip automated system-sent/alert emails that are not telemetry/log reports
@@ -3422,12 +3407,7 @@ Check Time: 2026-06-16 08:00 UTC"""
             
             if is_automated:
                 print(f"[REPLY FILTER] Skipping automated or system-sent alert: {subject}")
-                if not item.is_read:
-                    try:
-                        item.is_read = True
-                        item.save()
-                    except Exception: pass
-                mark_as_processed(msg_id, subject, sender_email)
+                mark_message_as_processed(item, subject, sender_email, msg_id)
                 continue
 
             # If it is a self-copied system alert, mark it as read so it doesn't clog the unread inbox queue
@@ -3438,7 +3418,7 @@ Check Time: 2026-06-16 08:00 UTC"""
                     item.save()
 
             # Always mark the item as processed at the end of the iteration
-            mark_as_processed(msg_id, subject, sender_email)
+            mark_message_as_processed(item, subject, sender_email, msg_id)
                     
         if inbox_items:
             try:

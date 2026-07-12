@@ -887,7 +887,11 @@ const Dashboard = () => {
                             onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
                             title="User Profile"
                         >
-                            <div className="profile-avatar-mini">{profileInitial}</div>
+                            {user?.profilePic ? (
+                                <img src={user.profilePic} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', border: '2px solid #38bdf8', objectFit: 'cover' }} />
+                            ) : (
+                                <div className="profile-avatar-mini">{profileInitial}</div>
+                            )}
                             <span className="profile-pill-name">{usernameDisplay}</span>
                             <ChevronDown size={14} className={`profile-pill-chevron ${profileDropdownOpen ? 'rotated' : ''}`} />
                         </button>
@@ -895,7 +899,11 @@ const Dashboard = () => {
                         {profileDropdownOpen && (
                             <div className="profile-dropdown glass">
                                 <div className="dropdown-user-info">
-                                    <div className="profile-avatar-large">{profileInitial}</div>
+                                    {user?.profilePic ? (
+                                        <img src={user.profilePic} alt="" style={{ width: '45px', height: '45px', borderRadius: '12px', border: '2px solid #38bdf8', objectFit: 'cover' }} />
+                                    ) : (
+                                        <div className="profile-avatar-large">{profileInitial}</div>
+                                    )}
                                     <div className="profile-details">
                                         <div className="profile-name">{usernameDisplay}</div>
                                         <div className="profile-email">{user?.email || user?.username || ''}</div>

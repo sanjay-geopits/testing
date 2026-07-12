@@ -124,7 +124,7 @@ const Home = () => {
         setProfilePicSuccess('');
         setProfilePicError('');
         try {
-            await api.post('/auth/profile-pic', { profile_pic: picUrl });
+            await api.post('/new-features/auth/profile-pic', { profile_pic: picUrl });
             setProfilePicSuccess('Avatar updated successfully!');
             if (refreshProfile) {
                 await refreshProfile();
@@ -156,7 +156,7 @@ const Home = () => {
         setPwdSuccess('');
         setPwdLoading(true);
         try {
-            await api.post('/auth/change-password', {
+            await api.post('/new-features/auth/change-password', {
                 current_password: currentPassword,
                 new_password: newPassword
             });
@@ -862,43 +862,88 @@ const Home = () => {
                                         ))}
                                     </div>
                                     
-                                    <div style={{ marginTop: '12px', display: 'flex', gap: '6px' }}>
-                                        <input
-                                            type="text"
-                                            placeholder="Custom Image URL..."
-                                            value={customAvatarUrl}
-                                            onChange={(e) => setCustomAvatarUrl(e.target.value)}
-                                            style={{
-                                                flex: 1,
-                                                padding: '6px 10px',
-                                                borderRadius: '8px',
-                                                background: themeStyles.inputBg,
-                                                border: themeStyles.inputBorder,
-                                                color: themeStyles.textMain,
-                                                fontSize: '0.75rem',
-                                                outline: 'none'
-                                            }}
-                                        />
-                                        <button
-                                            onClick={() => {
-                                                if (customAvatarUrl.trim()) {
-                                                    handleSaveProfilePic(customAvatarUrl.trim());
-                                                    setCustomAvatarUrl('');
-                                                }
-                                            }}
-                                            style={{
-                                                padding: '6px 12px',
-                                                background: themeStyles.accentColor,
-                                                color: isLight ? '#fff' : '#000',
-                                                border: 'none',
-                                                borderRadius: '8px',
-                                                fontSize: '0.75rem',
-                                                fontWeight: '700',
-                                                cursor: 'pointer'
-                                            }}
+                                    <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                            <input
+                                                type="text"
+                                                placeholder="Custom Image URL..."
+                                                value={customAvatarUrl}
+                                                onChange={(e) => setCustomAvatarUrl(e.target.value)}
+                                                style={{
+                                                    flex: 1,
+                                                    padding: '6px 10px',
+                                                    borderRadius: '8px',
+                                                    background: themeStyles.inputBg || (isLight ? '#f1f5f9' : 'rgba(255,255,255,0.05)'),
+                                                    border: themeStyles.inputBorder,
+                                                    color: themeStyles.textMain,
+                                                    fontSize: '0.75rem',
+                                                    outline: 'none'
+                                                }}
+                                            />
+                                            <button
+                                                onClick={() => {
+                                                    if (customAvatarUrl.trim()) {
+                                                        handleSaveProfilePic(customAvatarUrl.trim());
+                                                        setCustomAvatarUrl('');
+                                                    }
+                                                }}
+                                                style={{
+                                                    padding: '6px 12px',
+                                                    background: themeStyles.accentColor || '#38bdf8',
+                                                    color: isLight ? '#fff' : '#000',
+                                                    border: 'none',
+                                                    borderRadius: '8px',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: '700',
+                                                    cursor: 'pointer'
+                                                }}
+                                            >
+                                                Set
+                                            </button>
+                                        </div>
+                                        
+                                        <label style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '6px',
+                                            padding: '8px 12px',
+                                            border: isLight ? '1px dashed #cbd5e1' : '1px dashed rgba(255,255,255,0.2)',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer',
+                                            fontSize: '0.72rem',
+                                            color: themeStyles.textMuted,
+                                            background: isLight ? '#f8fafc' : 'rgba(255,255,255,0.02)',
+                                            transition: 'all 0.2s',
+                                            fontWeight: '600'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            e.currentTarget.style.borderColor = '#38bdf8';
+                                            e.currentTarget.style.background = isLight ? '#f0fdfa' : 'rgba(56,189,248,0.05)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.borderColor = isLight ? '#cbd5e1' : 'rgba(255,255,255,0.2)';
+                                            e.currentTarget.style.background = isLight ? '#f8fafc' : 'rgba(255,255,255,0.02)';
+                                        }}
                                         >
-                                            Set
-                                        </button>
+                                            <Upload size={14} style={{ color: '#38bdf8' }} />
+                                            <span>Upload Profile Image</span>
+                                            <input 
+                                                type="file" 
+                                                accept="image/*"
+                                                onChange={async (e) => {
+                                                    const file = e.target.files?.[0];
+                                                    if (file) {
+                                                        const reader = new FileReader();
+                                                        reader.onloadend = () => {
+                                                            handleSaveProfilePic(reader.result);
+                                                        };
+                                                        reader.readAsDataURL(file);
+                                                    }
+                                                }}
+                                                style={{ display: 'none' }}
+                                            />
+                                        </label>
                                     </div>
 
                                     {profilePicSuccess && (

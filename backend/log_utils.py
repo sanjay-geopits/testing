@@ -171,29 +171,47 @@ def get_12h_bucket(dt: datetime) -> str:
         else:
             return dt.strftime("%Y-%m-%d") + "_08AM"
 
+_semantic_group_cache = {}
+_semantic_cache_expiry = {}
+
+def add_semantic_group_to_cache(client, server, log_type, time_bucket, message, semantic_hash):
+    cache_key = (client, server, log_type, time_bucket)
+    if cache_key in _semantic_group_cache:
+        if not any(x[1] == semantic_hash for x in _semantic_group_cache[cache_key]):
+            _semantic_group_cache[cache_key].append((message, semantic_hash))
+
 def get_semantic_group(client, server, log_type, time_bucket, message):
     """Finds an existing semantic group for the given log."""
-    db_conn = get_connection()
-    try:
-        cur = db_conn.cursor()
-        # Find distinct semantic groups in this bucket (any log could be a leader)
-        cur.execute("""
-            SELECT DISTINCT ON (semantic_hash) log_message, semantic_hash
-            FROM db_monitoring_logs
-            WHERE client_name = %s AND server_name = %s AND log_type = %s 
-              AND time_bucket = %s
-        """, (client, server, log_type, time_bucket))
-        
-        rows = cur.fetchall()
-        cur.close()
-        for ref_msg, sem_hash in rows:
-            similarity = difflib.SequenceMatcher(None, ref_msg, message).ratio()
-            if similarity >= 0.85:
-                return sem_hash
-        return None
-    except Exception as e:
-        print(f"Error in get_semantic_group: {e}")
-        return None
+    cache_key = (client, server, log_type, time_bucket)
+    now = time.time()
+    
+    if cache_key in _semantic_group_cache and (now - _semantic_cache_expiry[cache_key]) < 10:
+        rows = _semantic_group_cache[cache_key]
+    else:
+        db_conn = get_connection()
+        try:
+            cur = db_conn.cursor()
+            # Find distinct semantic groups in this bucket (any log could be a leader)
+            cur.execute("""
+                SELECT DISTINCT ON (semantic_hash) log_message, semantic_hash
+                FROM db_monitoring_logs
+                WHERE client_name = %s AND server_name = %s AND log_type = %s 
+                  AND time_bucket = %s
+            """, (client, server, log_type, time_bucket))
+            
+            rows = cur.fetchall()
+            cur.close()
+            _semantic_group_cache[cache_key] = list(rows)
+            _semantic_cache_expiry[cache_key] = now
+        except Exception as e:
+            print(f"Error in get_semantic_group: {e}")
+            return None
+            
+    for ref_msg, sem_hash in rows:
+        similarity = difflib.SequenceMatcher(None, ref_msg, message).ratio()
+        if similarity >= 0.85:
+            return sem_hash
+    return None
 
 def insert_log(row):
     # row = (client, server, db, type, source, time, utc, ist, msg, raw, subject, received, h, occ, severity)
@@ -382,6 +400,10 @@ def insert_log(row):
                     is_semantic, sem_count, h, time_bucket,
                     t_id, t_status
                 ))
+                
+                # Add to cache if it's a new potential semantic leader
+                if not sem_hash and not is_perf:
+                    add_semantic_group_to_cache(client, server, l_type, time_bucket, msg, h)
             
             db_conn.commit()
             print(f"[{'PERF' if is_perf else 'LOG'}] Processed -> {client} | {server} | {l_type} | {str(msg)[:80]}")

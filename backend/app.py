@@ -1363,7 +1363,7 @@ oauth.register(
 async def auth_login(provider: str, request: Request):
     redirect_uri = os.getenv("APP_REDIRECT_URI")
     if not redirect_uri:
-        redirect_uri = f"https://api.geovexsight.geopits.com/api/auth/callback/{provider}"
+        redirect_uri = f"https://api.geomon.geopits.com/api/auth/callback/{provider}"
     if provider == 'microsoft':
         return await oauth.microsoft.authorize_redirect(request, redirect_uri)
     else:
@@ -1374,7 +1374,7 @@ async def auth_callback(provider: str, request: Request):
     try:
         redirect_uri = os.getenv("APP_REDIRECT_URI")
         if not redirect_uri:
-            redirect_uri = f"https://api.geovexsight.geopits.com/api/auth/callback/{provider}"
+            redirect_uri = f"https://api.geomon.geopits.com/api/auth/callback/{provider}"
         if provider == 'microsoft':
             try:
                 token = await oauth.microsoft.authorize_access_token(request, redirect_uri=redirect_uri)
@@ -3188,14 +3188,38 @@ def create_admin_client(req: ClientAccessRequest, admin_user: dict = Depends(get
         raise HTTPException(status_code=400, detail="All client details (Email, Technology, Name, Server) are required.")
     
     try:
+        user_created = False
         with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
                 INSERT INTO client_access (client_email, technology, client_name, server_name, status) 
                 VALUES (%s, %s, %s, %s, 'enabled') 
+                ON CONFLICT (client_email, technology, client_name, server_name) DO UPDATE SET status = 'enabled'
                 RETURNING id
             """, (email, tech, name, server))
-            inserted_id = cur.fetchone()[0]
+            res = cur.fetchone()
+            inserted_id = res[0] if res else None
+            
+            # Check/Pre-create user record in users table
+            cur.execute("SELECT id, role FROM users WHERE LOWER(email) = LOWER(%s);", (email,))
+            user_row = cur.fetchone()
+            if user_row:
+                # If they exist, ensure client role is updated if not admin
+                existing_role = user_row[1]
+                if existing_role not in ['admin', 'client']:
+                    cur.execute("UPDATE users SET role = 'client' WHERE id = %s;", (user_row[0],))
+            else:
+                # Pre-create the client user securely
+                username = email.split("@")[0]
+                import bcrypt
+                hashed_pwd = bcrypt.hashpw("geopits123".encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                cur.execute("""
+                    INSERT INTO users (username, email, full_name, hashed_password, role)
+                    VALUES (%s, %s, %s, %s, 'client')
+                    ON CONFLICT (username) DO NOTHING;
+                """, (username, email, username.capitalize(), hashed_pwd))
+                user_created = True
+                
             conn.commit()
             cur.close()
             
@@ -3203,6 +3227,49 @@ def create_admin_client(req: ClientAccessRequest, admin_user: dict = Depends(get
         print(audit_msg)
         audit_logger.info(audit_msg)
         
+        # Send Email
+        try:
+            from routes import send_email_outlook, build_gorgeous_html_email
+            username = email.split("@")[0]
+            greeting = f"Hello {username.capitalize()},"
+            if user_created:
+                subject = "[GeoMon Portal] Invitation"
+                lead_text = "You have been invited to join the GeoMon Enterprise Observability Portal. A new account has been pre-created for you. Please log in using the temporary credentials below and update your password upon first entry."
+                details = {
+                    "Username": username,
+                    "Temporary Password": "geopits123",
+                    "Assigned Role": "CLIENT",
+                    "Mapped Client": name,
+                    "Database Technology": tech,
+                    "Portal Access URL": "http://localhost:8000/#/login"
+                }
+                title = "Account Invitation"
+            else:
+                subject = f"[GeoMon Portal] Client Environment Assigned: {name}"
+                lead_text = "An administrator has registered or updated your client access mapping. Please review your updated access configuration below."
+                details = {
+                    "Username": username,
+                    "Client Name": name,
+                    "Database Technology": tech,
+                    "Server Assigned": server,
+                    "Status": "ENABLED",
+                    "Portal Access URL": "http://localhost:8000/#/login"
+                }
+                title = "Client Access Configured"
+                
+            body = build_gorgeous_html_email(
+                title=title,
+                greeting=greeting,
+                lead_text=lead_text,
+                details=details,
+                action_url="http://localhost:8000/#/login",
+                action_text="Access Observability Portal"
+            )
+            send_email_outlook(to_emails=email, cc_emails=None, subject=subject, body=body, exclude_dccagent=True)
+            print(f"[CLIENT NOTIFICATION SENT] Emailed {email} about client mapping for {name}")
+        except Exception as mail_err:
+            print(f"[CLIENT NOTIFICATION ERROR] Failed to send email to {email}: {mail_err}")
+            
         return {"status": "success", "id": inserted_id}
     except Exception as e:
         print(f"Client Access Creation Error: {e}")

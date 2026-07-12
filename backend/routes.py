@@ -170,7 +170,85 @@ def lookup_email_routing_service(client_name: str, db_type: str, conn=None):
         
     return to_emails, cc_emails, from_email
 
-def send_email_outlook(to_emails: str, cc_emails: Optional[str], subject: str, body: str, sender_email: Optional[str] = None, attachments: list = None, reply_to: Optional[str] = None):
+def build_gorgeous_html_email(title: str, greeting: str, lead_text: str, details: dict, action_url: Optional[str] = None, action_text: Optional[str] = None) -> str:
+    details_html = ""
+    for label, val in details.items():
+        details_html += f"""
+        <tr>
+            <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; color: #64748b; font-weight: 500; font-size: 14px; width: 180px; text-align: left;">{label}</td>
+            <td style="padding: 12px 16px; border-bottom: 1px solid #e2e8f0; color: #0f172a; font-weight: 600; font-size: 14px; text-align: left;">{val}</td>
+        </tr>
+        """
+        
+    action_button_html = ""
+    if action_url and action_text:
+        action_button_html = f"""
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 30px auto; width: 100%; max-width: 280px;">
+            <tr>
+                <td align="center" bgcolor="#2563eb" style="border-radius: 8px; background-color: #2563eb;">
+                    <a href="{action_url}" target="_blank" style="background-color: #2563eb; border: 12px solid #2563eb; border-radius: 8px; color: #ffffff; display: inline-block; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 700; text-align: center; text-decoration: none; width: 100%; box-sizing: border-box; -webkit-text-size-adjust: none;">{action_text}</a>
+                </td>
+            </tr>
+        </table>
+        """
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{title}</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc; padding: 40px 0;">
+            <tr>
+                <td align="center">
+                    <table role="presentation" width="100%" style="max-width: 600px; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.05);" cellspacing="0" cellpadding="0" border="0">
+                        <!-- Header Banner -->
+                        <tr>
+                            <td style="background-color: #0f172a; background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 35px 40px; text-align: center;">
+                                <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">{title}</h1>
+                                <p style="color: #94a3b8; margin: 5px 0 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">GeoMon Enterprise Observability</p>
+                            </td>
+                        </tr>
+                        <!-- Content -->
+                        <tr>
+                            <td style="padding: 40px 40px 30px 40px;">
+                                <p style="margin: 0 0 16px 0; font-size: 16px; line-height: 24px; color: #0f172a; font-weight: 600; text-align: left;">{greeting}</p>
+                                <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 24px; color: #334155; text-align: left;">{lead_text}</p>
+                                
+                                <!-- Details Table -->
+                                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border: 1px solid #e2e8f0; border-radius: 8px; border-collapse: separate; overflow: hidden; margin-bottom: 24px;">
+                                    {details_html}
+                                </table>
+                                
+                                {action_button_html}
+                                
+                                <p style="margin: 24px 0 0 0; font-size: 13px; line-height: 20px; color: #64748b; font-style: italic; text-align: left;">
+                                    For security reasons, please do not share these details. If you need to reset or change your password, you can do so directly from your account settings inside the portal.
+                                </p>
+                            </td>
+                        </tr>
+                        <!-- Footer -->
+                        <tr>
+                            <td style="background-color: #f1f5f9; padding: 25px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
+                                <p style="margin: 0; font-size: 12px; color: #94a3b8; line-height: 18px;">
+                                    &copy; 2026 GeoMon Inc. All rights reserved.<br/>
+                                    This is an automated system notification. Please do not reply directly to this email.
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+    </body>
+    </html>
+    """
+    return html
+
+def send_email_outlook(to_emails: str, cc_emails: Optional[str], subject: str, body: str, sender_email: Optional[str] = None, attachments: list = None, reply_to: Optional[str] = None, exclude_dccagent: bool = False):
     import os
     import re
     import requests
@@ -209,7 +287,7 @@ def send_email_outlook(to_emails: str, cc_emails: Optional[str], subject: str, b
 
     # Auto-add dccagent@geopits.com to CC if final_sender is a personal user account
     # to ensure the ticket inbox receives a copy and replies are routed back to the system.
-    if final_sender.strip().lower() != "dccagent@geopits.com":
+    if not exclude_dccagent and final_sender.strip().lower() != "dccagent@geopits.com":
         if cc_emails:
             cc_list = [c.strip().lower() for c in re.split(r'[;,]', cc_emails) if c.strip()]
             if "dccagent@geopits.com" not in cc_list:
@@ -249,7 +327,7 @@ def send_email_outlook(to_emails: str, cc_emails: Optional[str], subject: str, b
     to_list = []
     if to_emails:
         to_list = [e.strip() for e in re.split(r'[;,]', to_emails) if e.strip()]
-    if "dccagent@geopits.com" not in [e.lower() for e in to_list]:
+    if not exclude_dccagent and "dccagent@geopits.com" not in [e.lower() for e in to_list]:
         to_list.insert(0, "dccagent@geopits.com")
     to_emails = ", ".join(to_list)
         
@@ -1548,6 +1626,7 @@ def create_user_permissions(perm: UserPermissionCreate, user: dict = Depends(get
             """, (perm.email.strip().lower(),))
             
         # Check if user exists in users table
+        user_created = False
         cur.execute("SELECT id FROM users WHERE LOWER(email) = LOWER(%s);", (perm.email.strip(),))
         user_row = cur.fetchone()
         if user_row:
@@ -1562,43 +1641,47 @@ def create_user_permissions(perm: UserPermissionCreate, user: dict = Depends(get
                 VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (username) DO NOTHING;
             """, (username, perm.email.strip(), username.capitalize(), hashed_pwd, role_selected))
+            user_created = True
             
         conn.commit()
 
         # Send technology & role assignment notification email
         try:
-            subject = f"[GeoVexSight] System Privilege Allocation Updated"
             role_display = "Lead" if perm.is_lead else (perm.role if perm.role else "User")
-            body = f"""
-            <html>
-            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; background-color: #fafafa;">
-                    <h2 style="color: #2b6cb0; border-bottom: 2px solid #2b6cb0; padding-bottom: 10px; margin-top: 0;">GeoVexSight Access Control</h2>
-                    <p>Dear System Operator,</p>
-                    <p>We are writing to notify you that your technology scopes and system role have been updated by an administrator:</p>
-                    
-                    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-                        <tr style="background-color: #f7fafc;">
-                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold; width: 150px;">Role Assigned:</td>
-                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold; color: #2c5282;">{role_display.upper()}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold;">Technologies:</td>
-                            <td style="padding: 10px; border: 1px solid #edf2f7;"><span style="background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em;">{perm.technology}</span></td>
-                        </tr>
-                        <tr style="background-color: #f7fafc;">
-                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold;">Status:</td>
-                            <td style="padding: 10px; border: 1px solid #edf2f7;">{perm.status.capitalize()}</td>
-                        </tr>
-                    </table>
-
-                    <p>You can access the portal dashboard to monitor these technologies.</p>
-                    <p style="margin-bottom: 0;">Best Regards,<br/><strong>GeoVexSight Security Team</strong></p>
-                </div>
-            </body>
-            </html>
-            """
-            send_email_outlook(to_emails=perm.email.strip(), cc_emails=None, subject=subject, body=body)
+            username = perm.email.split("@")[0]
+            greeting = f"Hello {username.capitalize()},"
+            if user_created:
+                subject = "[GeoMon Portal] Invitation"
+                lead_text = "You have been invited to join the GeoMon Enterprise Observability Portal. A new account has been pre-created for you. Please log in using the temporary password below and update it upon first entry."
+                details = {
+                    "Username": username,
+                    "Temporary Password": "geopits123",
+                    "Assigned Role": role_display.upper(),
+                    "Technology Scopes": perm.technology,
+                    "Portal Access URL": "http://localhost:8000/#/login"
+                }
+                title = "Account Invitation"
+            else:
+                subject = "[GeoMon Portal] System Privilege Allocation Updated"
+                lead_text = "Your technology scopes and system access role have been updated by an administrator. Please review your updated permissions below."
+                details = {
+                    "Username": username,
+                    "Assigned Role": role_display.upper(),
+                    "Technology Scopes": perm.technology,
+                    "Scope Status": perm.status.capitalize(),
+                    "Portal Access URL": "http://localhost:8000/#/login"
+                }
+                title = "Privilege Update"
+                
+            body = build_gorgeous_html_email(
+                title=title,
+                greeting=greeting,
+                lead_text=lead_text,
+                details=details,
+                action_url="http://localhost:8000/#/login",
+                action_text="Access Observability Portal"
+            )
+            send_email_outlook(to_emails=perm.email.strip(), cc_emails=None, subject=subject, body=body, exclude_dccagent=True)
             print(f"[PRIVILEGE NOTIFICATION SENT] Emailed {perm.email.strip()} about role/technology scopes")
         except Exception as mail_err:
             print(f"[PRIVILEGE NOTIFICATION ERROR] Failed to send email to {perm.email}: {mail_err}")
@@ -1649,6 +1732,7 @@ def create_user_client_permission(perm: UserClientPermissionCreate, user: dict =
         client_name_clean = perm.client_name.strip()
         
         # 1. Resolve or pre-create the user
+        user_created = False
         cur.execute("SELECT id FROM users WHERE LOWER(email) = %s;", (email_clean,))
         user_row = cur.fetchone()
         if user_row:
@@ -1663,6 +1747,7 @@ def create_user_client_permission(perm: UserClientPermissionCreate, user: dict =
                 RETURNING id;
             """, (username, email_clean, username.capitalize(), hashed_pwd))
             user_id = cur.fetchone()[0]
+            user_created = True
             
         # 2. Resolve client_id from admin_clients
         cur.execute("SELECT id FROM admin_clients WHERE client_name = %s;", (client_name_clean,))
@@ -1683,37 +1768,41 @@ def create_user_client_permission(perm: UserClientPermissionCreate, user: dict =
 
         # Send privilege assignment notification email
         try:
-            subject = f"[GeoVexSight] Client Privilege Allocated: {client_name_clean}"
-            body = f"""
-            <html>
-            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                <div style="max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; background-color: #fafafa;">
-                    <h2 style="color: #2b6cb0; border-bottom: 2px solid #2b6cb0; padding-bottom: 10px; margin-top: 0;">GeoVexSight Access Control</h2>
-                    <p>Dear System Operator,</p>
-                    <p>We are writing to notify you that an administrator has assigned or updated your access privileges for the following client environment:</p>
-                    
-                    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-                        <tr style="background-color: #f7fafc;">
-                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold; width: 150px;">Client Name:</td>
-                            <td style="padding: 10px; border: 1px solid #edf2f7;">{client_name_clean}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold;">Access Level:</td>
-                            <td style="padding: 10px; border: 1px solid #edf2f7;"><span style="background-color: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em;">{perm.access_level}</span></td>
-                        </tr>
-                        <tr style="background-color: #f7fafc;">
-                            <td style="padding: 10px; border: 1px solid #edf2f7; font-weight: bold;">Assigned By:</td>
-                            <td style="padding: 10px; border: 1px solid #edf2f7;">{user.get("username", "System Administrator")}</td>
-                        </tr>
-                    </table>
-
-                    <p>You can now view metrics, logs, and telemetry related to this client in your dashboard.</p>
-                    <p style="margin-bottom: 0;">Best Regards,<br/><strong>GeoVexSight Security Team</strong></p>
-                </div>
-            </body>
-            </html>
-            """
-            send_email_outlook(to_emails=email_clean, cc_emails=None, subject=subject, body=body)
+            username = email_clean.split("@")[0]
+            greeting = f"Hello {username.capitalize()},"
+            if user_created:
+                subject = "[GeoMon Portal] Invitation"
+                lead_text = "You have been invited to join the GeoMon Enterprise Observability Portal. A new account has been pre-created for you. Please log in using the temporary credentials below and update your password upon first entry."
+                details = {
+                    "Username": username,
+                    "Temporary Password": "geopits123",
+                    "Assigned Role": "USER",
+                    "Client Access": client_name_clean,
+                    "Access Level": perm.access_level.upper(),
+                    "Portal Access URL": "http://localhost:8000/#/login"
+                }
+                title = "Account Invitation"
+            else:
+                subject = f"[GeoMon Portal] Client Privilege Allocated: {client_name_clean}"
+                lead_text = "An administrator has updated your access privileges for the client environment below."
+                details = {
+                    "Username": username,
+                    "Client Name": client_name_clean,
+                    "Access Level": perm.access_level.upper(),
+                    "Assigned By": user.get("username", "System Administrator"),
+                    "Portal Access URL": "http://localhost:8000/#/login"
+                }
+                title = "Client Access Allocated"
+                
+            body = build_gorgeous_html_email(
+                title=title,
+                greeting=greeting,
+                lead_text=lead_text,
+                details=details,
+                action_url="http://localhost:8000/#/login",
+                action_text="Access Observability Portal"
+            )
+            send_email_outlook(to_emails=email_clean, cc_emails=None, subject=subject, body=body, exclude_dccagent=True)
             print(f"[PRIVILEGE NOTIFICATION SENT] Emailed {email_clean} about privilege for client {client_name_clean}")
         except Exception as mail_err:
             print(f"[PRIVILEGE NOTIFICATION ERROR] Failed to send email to {email_clean}: {mail_err}")
@@ -1903,7 +1992,7 @@ class AdminUserCreate(BaseModel):
     username: str
     email: str
     full_name: str
-    password: str
+    password: Optional[str] = None
     role: str
 
 class ChangePasswordRequest(BaseModel):
@@ -2023,7 +2112,11 @@ def add_admin_user(user_req: AdminUserCreate, user: dict = Depends(get_current_u
             raise HTTPException(status_code=403, detail="Lead users cannot create admin or lead accounts")
             
     import bcrypt
-    hashed_pwd = bcrypt.hashpw(user_req.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    temp_pwd = user_req.password.strip() if user_req.password else None
+    if temp_pwd:
+        hashed_pwd = bcrypt.hashpw(temp_pwd.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    else:
+        hashed_pwd = bcrypt.hashpw("geopits123".encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     
     conn = get_connection()
     try:
@@ -2056,26 +2149,38 @@ def add_admin_user(user_req: AdminUserCreate, user: dict = Depends(get_current_u
 
         # Send invitation email using the existing Outlook mail sender
         try:
-            subject = "[GeoMon Portal] Invitation & Login Credentials"
-            body = f"""Hello {user_req.full_name},
-
-You have been invited to join the GeoMon Enterprise Observability Portal.
-
-Your login details are as follows:
-- Username: {user_req.username}
-- Temporary Password: {user_req.password}
-- Role: {user_req.role.upper()}
-
-Please login at http://localhost:8000/#/login and update your password using the "Change Password" console on the home screen.
-
-Best regards,
-GeoMon Administration Team
-"""
+            greeting = f"Hello {user_req.full_name},"
+            if temp_pwd:
+                subject = "[GeoMon Portal] Invitation & Login Credentials"
+                lead_text = "You have been invited to join the GeoMon Enterprise Observability Portal. Your account has been provisioned with the credentials below. Please log in and change your password upon your first login."
+                details = {
+                    "Username": user_req.username,
+                    "Temporary Password": temp_pwd,
+                    "Assigned Role": user_req.role.upper(),
+                    "Portal Access URL": "http://localhost:8000/#/login"
+                }
+            else:
+                subject = "[GeoMon Portal] Invitation"
+                lead_text = "You have been invited to join the GeoMon Enterprise Observability Portal. Your login account has been successfully initialized. You can now log in using your standard credentials."
+                details = {
+                    "Username": user_req.username,
+                    "Assigned Role": user_req.role.upper(),
+                    "Portal Access URL": "http://localhost:8000/#/login"
+                }
+            body = build_gorgeous_html_email(
+                title="Account Invitation",
+                greeting=greeting,
+                lead_text=lead_text,
+                details=details,
+                action_url="http://localhost:8000/#/login",
+                action_text="Access Observability Portal"
+            )
             send_email_outlook(
                 to_emails=user_req.email,
                 cc_emails=None,
                 subject=subject,
-                body=body
+                body=body,
+                exclude_dccagent=True
             )
         except Exception as mail_err:
             print(f"[MAIL ERROR] Failed to send invitation email: {mail_err}")

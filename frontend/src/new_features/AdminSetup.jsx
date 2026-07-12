@@ -975,10 +975,12 @@ const AdminSetup = () => {
 
         try {
             // 1. Assign privilege technologies
-            await api.post('/admin/leads', {
+            await api.post('/new-features/admin/user-permissions', {
                 email: permEmail.trim(),
-                technologies: selectedPermTechs,
-                is_lead: permRole === 'lead'
+                technology: selectedPermTechs.join(', '),
+                status: 'active',
+                is_lead: permRole === 'lead',
+                role: permRole
             });
 
             // 2. Assign client environment view permission if selected

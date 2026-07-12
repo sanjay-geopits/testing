@@ -617,17 +617,16 @@ def process_rds_mail(item) -> None:
     
     # Trigger analytics refresh (Materialized View + Filter Cache)
     try:
-        import requests
-        # We hit the local endpoint. Since it requires auth, but this is a backend script, 
-        # we might need an internal token or just refresh directly via a function if possible.
-        # However, for simplicity here, I will just call the refresh function directly if imported, 
-        # but log_extractor is a separate process. 
-        # Best approach: Trigger refresh directly in DB from here.
-        with get_db_connection() as conn:
-            conn.set_isolation_level(0) # AUTOCOMMIT
-            with conn.cursor() as cur:
-                cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY combined_logs_mv;")
-        print("[REFRESH] Success: Materialized View updated.")
+        # Note: REFRESH MATERIALIZED VIEW CONCURRENTLY combined_logs_mv on a 3M+ row table 
+        # takes several minutes and blocks concurrent refreshes/log ingestion. 
+        # The application queries logs via live UNION ALL and doesn't read the MV,
+        # so this synchronous refresh is disabled to ensure fast, real-time ingestion.
+        #
+        # with get_db_connection() as conn:
+        #     conn.set_isolation_level(0) # AUTOCOMMIT
+        #     with conn.cursor() as cur:
+        #         cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY combined_logs_mv;")
+        print("[REFRESH] Skipped synchronous MV refresh to avoid blocking ingestion loop.")
     except Exception as re:
         print(f"[REFRESH] Error: {re}")
         
