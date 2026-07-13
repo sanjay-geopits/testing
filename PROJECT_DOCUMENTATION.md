@@ -625,6 +625,12 @@ cp -r dist/* ../backend/static/
 
 ---
 
+## 10. Admin Interface Specifications
+
+For the visual layouts, features, and actual screenshots of the 6 administrative tabs, refer to [`ADMIN_PANEL_WIREFRAMES.md`](./ADMIN_PANEL_WIREFRAMES.md).
+
+---
+
 ## 11. Environment Variables Reference
 
 | Variable | Required | Default | Description |

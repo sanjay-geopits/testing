@@ -268,7 +268,7 @@ The app will be available at `http://localhost:8000`
 
 ## 📊 ER Diagram
 
-See [`GeoMon_ER_Diagram.png`](./GeoMon_ER_Diagram.png) and the full schema in [`PROJECT_DOCUMENTATION.md`](./PROJECT_DOCUMENTATION.md).
+See [`GeoMon_ER_Diagram.png`](./GeoMon_ER_Diagram.png), the full schema in [`PROJECT_DOCUMENTATION.md`](./PROJECT_DOCUMENTATION.md), and the live Admin interface specification in [`ADMIN_PANEL_WIREFRAMES.md`](./ADMIN_PANEL_WIREFRAMES.md).
 
 ---
 
